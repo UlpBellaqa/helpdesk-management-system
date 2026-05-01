@@ -1,120 +1,135 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { useEffect, useState } from 'react'
 import './App.css'
+import { useAuth } from './state/useAuth.js'
 
 function App() {
-  const [count, setCount] = useState(0)
+  const { token, user, login, logout } = useAuth()
+  const [email, setEmail] = useState('admin@demo.com')
+  const [password, setPassword] = useState('admin123')
+  const [tickets, setTickets] = useState([])
+  const [search, setSearch] = useState('')
+  const [aiMessage, setAiMessage] = useState('Summarize open ticket risks')
+  const [aiReply, setAiReply] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!token) return
+    fetch(`http://localhost:4000/api/tickets?q=${encodeURIComponent(search)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((response) => response.json())
+      .then(setTickets)
+      .catch(() => setError('API is not running on port 4000'))
+  }, [token, search])
+
+  const submitLogin = async (event) => {
+    event.preventDefault()
+    setError('')
+    try {
+      await login(email, password)
+    } catch {
+      setError('Invalid credentials or backend is offline')
+    }
+  }
+
+  const askAi = async () => {
+    const response = await fetch('http://localhost:4000/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ message: aiMessage }),
+    })
+    const data = await response.json()
+    setAiReply(data.reply)
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
+    <main className="app-shell">
+      <aside className="sidebar">
         <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
+          <p className="eyebrow">Distributed Systems</p>
+          <h1>Helpdesk Management</h1>
         </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
+        <nav>
+          <a href="#tickets">Tickets</a>
+          <a href="#search">Search</a>
+          <a href="#ai">AI Module</a>
+          <a href="http://localhost:4000/api-docs" target="_blank">Swagger</a>
+        </nav>
+      </aside>
+
+      <section className="workspace">
+        <header className="topbar">
+          <div>
+            <strong>{user ? user.name : 'Demo login'}</strong>
+            <span>{user ? `${user.role} tenant ${user.tenantId}` : 'React Context auth state'}</span>
+          </div>
+          {token && <button onClick={logout}>Logout</button>}
+        </header>
+
+        {!token ? (
+          <form className="panel login-panel" onSubmit={submitLogin}>
+            <h2>Login</h2>
+            <label>
+              Email
+              <input value={email} onChange={(event) => setEmail(event.target.value)} />
+            </label>
+            <label>
+              Password
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            </label>
+            <button type="submit">Login</button>
+            {error && <p className="error">{error}</p>}
+          </form>
+        ) : (
+          <>
+            <section id="tickets" className="metrics">
+              <article>
+                <span>REST endpoints</span>
+                <strong>70+</strong>
+              </article>
+              <article>
+                <span>Models</span>
+                <strong>22</strong>
+              </article>
+              <article>
+                <span>Tenancy</span>
+                <strong>tenantId</strong>
+              </article>
+              <article>
+                <span>Cache</span>
+                <strong>In memory</strong>
+              </article>
+            </section>
+
+            <section id="search" className="panel">
+              <div className="panel-heading">
+                <h2>Tickets</h2>
+                <input placeholder="Search or filter tickets" value={search} onChange={(event) => setSearch(event.target.value)} />
+              </div>
+              <div className="table">
+                {tickets.map((ticket) => (
+                  <div className="row" key={ticket.id}>
+                    <span>#{ticket.id}</span>
+                    <strong>{ticket.title}</strong>
+                    <span>{ticket.status}</span>
+                    <span>{ticket.priority}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section id="ai" className="panel ai-panel">
+              <h2>OpenAI Module</h2>
+              <div className="ai-controls">
+                <input value={aiMessage} onChange={(event) => setAiMessage(event.target.value)} />
+                <button onClick={askAi}>Ask AI</button>
+              </div>
+              {aiReply && <p className="ai-reply">{aiReply}</p>}
+            </section>
+          </>
+        )}
       </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    </main>
   )
 }
 

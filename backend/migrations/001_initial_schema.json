@@ -1,0 +1,28 @@
+{
+  "name": "001_initial_schema",
+  "description": "Initial helpdesk schema for the distributed systems project.",
+  "models": [
+    "Tenant",
+    "User",
+    "Role",
+    "Permission",
+    "Department",
+    "Team",
+    "AgentProfile",
+    "Customer",
+    "ServiceCatalog",
+    "SlaPolicy",
+    "Priority",
+    "Category",
+    "Ticket",
+    "TicketComment",
+    "TicketAttachment",
+    "TicketHistory",
+    "KnowledgeArticle",
+    "Notification",
+    "AuditLog",
+    "AiConversation",
+    "CacheEntry",
+    "BackgroundJob"
+  ]
+}
