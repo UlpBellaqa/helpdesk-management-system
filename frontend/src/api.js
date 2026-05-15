@@ -1,0 +1,20 @@
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+
+export async function apiRequest(path, { token, method = 'GET', body } = {}) {
+  const headers = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+
+  const text = await response.text()
+  const data = text ? JSON.parse(text) : null
+  if (!response.ok) {
+    throw new Error(data?.message || `Request failed with ${response.status}`)
+  }
+  return data
+}

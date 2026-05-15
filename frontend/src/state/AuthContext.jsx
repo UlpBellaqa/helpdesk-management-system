@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AuthContext } from './authStore.js'
+import { apiRequest } from '../api.js'
 
 
 export function AuthProvider({ children }) {
@@ -9,13 +10,10 @@ export function AuthProvider({ children }) {
   })
 
   const login = async (email, password) => {
-    const response = await fetch('http://localhost:4000/api/auth/login', {
+    const data = await apiRequest('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: { email, password },
     })
-    if (!response.ok) throw new Error('Login failed')
-    const data = await response.json()
     localStorage.setItem('helpdesk_token', data.token)
     localStorage.setItem('helpdesk_user', JSON.stringify(data.user))
     setSession(data)

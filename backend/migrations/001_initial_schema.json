@@ -1,28 +1,117 @@
 {
   "name": "001_initial_schema",
-  "description": "Initial helpdesk schema for the distributed systems project.",
+  "description": "Initial multi-tenant helpdesk schema for the distributed systems project.",
+  "storage": "PostgreSQL stores each model in its own table using common columns plus JSONB data. Redis is used by the API cache layer for repeated searches.",
   "models": [
-    "Tenant",
-    "User",
-    "Role",
-    "Permission",
-    "Department",
-    "Team",
-    "AgentProfile",
-    "Customer",
-    "ServiceCatalog",
-    "SlaPolicy",
-    "Priority",
-    "Category",
-    "Ticket",
-    "TicketComment",
-    "TicketAttachment",
-    "TicketHistory",
-    "KnowledgeArticle",
-    "Notification",
-    "AuditLog",
-    "AiConversation",
-    "CacheEntry",
-    "BackgroundJob"
+    {
+      "name": "Tenant",
+      "fields": ["id", "name", "slug", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "User",
+      "fields": ["id", "tenantId", "roleId", "name", "email", "password", "role", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "Role",
+      "fields": ["id", "tenantId", "name", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "Permission",
+      "fields": ["id", "tenantId", "roleId", "name", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "Department",
+      "fields": ["id", "tenantId", "name", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "Team",
+      "fields": ["id", "tenantId", "departmentId", "name", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "AgentProfile",
+      "fields": ["id", "tenantId", "userId", "teamId", "title", "active", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "Customer",
+      "fields": ["id", "tenantId", "name", "email", "company", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "ServiceCatalog",
+      "fields": ["id", "tenantId", "departmentId", "name", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "SlaPolicy",
+      "fields": ["id", "tenantId", "name", "priority", "responseHours", "resolutionHours", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "Priority",
+      "fields": ["id", "tenantId", "name", "rank", "responseHours", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "Category",
+      "fields": ["id", "tenantId", "name", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "Ticket",
+      "fields": ["id", "tenantId", "customerId", "assigneeId", "serviceId", "title", "description", "status", "priority", "category", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "TicketComment",
+      "fields": ["id", "tenantId", "ticketId", "authorId", "body", "internal", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "TicketAttachment",
+      "fields": ["id", "tenantId", "ticketId", "fileName", "url", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "TicketHistory",
+      "fields": ["id", "tenantId", "ticketId", "action", "fromStatus", "toStatus", "actorId", "commentId", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "KnowledgeArticle",
+      "fields": ["id", "tenantId", "title", "body", "category", "published", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "Notification",
+      "fields": ["id", "tenantId", "userId", "type", "message", "read", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "AuditLog",
+      "fields": ["id", "tenantId", "method", "path", "statusCode", "durationMs", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "AiConversation",
+      "fields": ["id", "tenantId", "prompt", "reply", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "CacheEntry",
+      "fields": ["id", "tenantId", "key", "value", "expiresAt", "createdAt", "updatedAt"]
+    },
+    {
+      "name": "BackgroundJob",
+      "fields": ["id", "tenantId", "type", "payload", "status", "result", "finishedAt", "createdAt", "updatedAt"]
+    }
+  ],
+  "relations": [
+    "User.tenantId -> Tenant.id",
+    "User.roleId -> Role.id",
+    "Permission.roleId -> Role.id",
+    "Team.departmentId -> Department.id",
+    "AgentProfile.userId -> User.id",
+    "AgentProfile.teamId -> Team.id",
+    "Ticket.customerId -> Customer.id",
+    "Ticket.assigneeId -> User.id",
+    "Ticket.serviceId -> ServiceCatalog.id",
+    "TicketComment.ticketId -> Ticket.id",
+    "TicketHistory.ticketId -> Ticket.id",
+    "Notification.userId -> User.id"
+  ],
+  "indexes": [
+    "Tenant.slug",
+    "User.email",
+    "Ticket.tenantId,status,priority",
+    "TicketComment.ticketId",
+    "TicketHistory.ticketId",
+    "AuditLog.tenantId,createdAt"
   ]
 }

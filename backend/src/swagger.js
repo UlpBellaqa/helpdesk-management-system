@@ -28,9 +28,19 @@ function buildSwaggerSpec(port = 4000) {
     '/health': { get: { summary: 'Health check', responses: { 200: { description: 'OK' } } } },
     '/api/auth/register': { post: { summary: 'Register user', responses: { 201: { description: 'Created' } } } },
     '/api/auth/login': { post: { summary: 'Login user', responses: { 200: { description: 'Token' } } } },
+    '/api/auth/me': { get: { summary: 'Current authenticated user', responses: { 200: { description: 'User profile' }, 401: { description: 'Unauthorized' } } } },
+    '/api/tenants/current': { get: { summary: 'Current tenant/company profile', responses: { 200: { description: 'Tenant profile' } } } },
+    '/api/dashboard/summary': { get: { summary: 'Tenant dashboard metrics', responses: { 200: { description: 'Summary metrics' } } } },
     '/api/search': { get: { summary: 'Global search and filtering', responses: { 200: { description: 'Results' } } } },
     '/api/ai/chat': { post: { summary: 'OpenAI chatbot endpoint', responses: { 200: { description: 'AI response' } } } },
     '/api/jobs': { post: { summary: 'Create background job', responses: { 202: { description: 'Queued' } } } },
+    '/api/tickets/{id}/comments': {
+      get: { summary: 'List ticket comments', responses: { 200: { description: 'Comments' }, 404: { description: 'Ticket not found' } } },
+      post: { summary: 'Add ticket comment', responses: { 201: { description: 'Created' }, 404: { description: 'Ticket not found' } } },
+    },
+    '/api/tickets/{id}/status': {
+      patch: { summary: 'Change ticket status', responses: { 200: { description: 'Updated' }, 400: { description: 'Invalid status' }, 403: { description: 'Forbidden' } } },
+    },
   };
 
   resources.forEach((resource) => {
@@ -53,6 +63,16 @@ function buildSwaggerSpec(port = 4000) {
       description: 'RESTful API for a multi-tenant helpdesk project.',
     },
     servers: [{ url: `http://localhost:${port}` }],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT-like HMAC token',
+        },
+      },
+    },
+    security: [{ bearerAuth: [] }],
     paths,
   };
 }

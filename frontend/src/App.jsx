@@ -1,133 +1,215 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import { API_BASE_URL, apiRequest } from './api.js'
 import { useAuth } from './state/useAuth.js'
+
+const statuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed']
 
 function App() {
   const { token, user, login, logout } = useAuth()
   const [email, setEmail] = useState('admin@demo.com')
   const [password, setPassword] = useState('admin123')
   const [tickets, setTickets] = useState([])
-  const [search, setSearch] = useState('')
+  const [selectedTicket, setSelectedTicket] = useState(null)
+  const [comments, setComments] = useState([])
+  const [ticketSearch, setTicketSearch] = useState('')
+  const [globalSearch, setGlobalSearch] = useState('laptop')
+  const [searchResult, setSearchResult] = useState(null)
   const [aiMessage, setAiMessage] = useState('Summarize open ticket risks')
   const [aiReply, setAiReply] = useState('')
   const [error, setError] = useState('')
+  const [newTicket, setNewTicket] = useState({ title: '', description: '', priority: 'Medium', category: 'Software' })
 
   useEffect(() => {
     if (!token) return
-    fetch(`http://localhost:4000/api/tickets?q=${encodeURIComponent(search)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((response) => response.json())
-      .then(setTickets)
-      .catch(() => setError('API is not running on port 4000'))
-  }, [token, search])
+    let active = true
 
-  const submitLogin = async (event) => {
+    async function loadTickets() {
+      try {
+        const rows = await apiRequest(`/api/tickets?q=${encodeURIComponent(ticketSearch)}`, { token })
+        if (!active) return
+        setTickets(rows)
+        setSelectedTicket((current) => rows.find((ticket) => ticket.id === current?.id) || rows[0] || null)
+      } catch (requestError) {
+        if (active) setError(requestError.message)
+      }
+    }
+
+    loadTickets()
+    return () => {
+      active = false
+    }
+  }, [ticketSearch, token])
+
+  useEffect(() => {
+    if (!token || !selectedTicket) return
+    let active = true
+
+    async function loadComments() {
+      try {
+        const rows = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token })
+        if (active) setComments(rows)
+      } catch (requestError) {
+        if (active) setError(requestError.message)
+      }
+    }
+
+    loadComments()
+    return () => {
+      active = false
+    }
+  }, [selectedTicket, token])
+
+  async function reloadTickets() {
+    const rows = await apiRequest(`/api/tickets?q=${encodeURIComponent(ticketSearch)}`, { token })
+    setTickets(rows)
+    setSelectedTicket((current) => rows.find((ticket) => ticket.id === current?.id) || rows[0] || null)
+  }
+
+  async function submitLogin(event) {
     event.preventDefault()
     setError('')
     try {
       await login(email, password)
-    } catch {
-      setError('Invalid credentials or backend is offline')
+    } catch (requestError) {
+      setError(requestError.message)
     }
   }
 
-  const askAi = async () => {
-    const response = await fetch('http://localhost:4000/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ message: aiMessage }),
-    })
-    const data = await response.json()
+  async function createTicket(event) {
+    event.preventDefault()
+    if (!newTicket.title.trim()) return
+    const ticket = await apiRequest('/api/tickets', { token, method: 'POST', body: { ...newTicket, status: 'open' } })
+    setNewTicket({ title: '', description: '', priority: 'Medium', category: 'Software' })
+    setSelectedTicket(ticket)
+    await reloadTickets()
+  }
+
+  async function updateStatus(status) {
+    const ticket = await apiRequest(`/api/tickets/${selectedTicket.id}/status`, { token, method: 'PATCH', body: { status } })
+    setSelectedTicket(ticket)
+    await reloadTickets()
+  }
+
+  async function addComment(event) {
+    event.preventDefault()
+    const body = event.currentTarget.elements.comment.value.trim()
+    if (!body || !selectedTicket) return
+    const comment = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token, method: 'POST', body: { body } })
+    event.currentTarget.reset()
+    setComments((rows) => [...rows, comment])
+  }
+
+  async function searchAll(event) {
+    event.preventDefault()
+    setSearchResult(await apiRequest(`/api/search?q=${encodeURIComponent(globalSearch)}`, { token }))
+  }
+
+  async function askAi() {
+    const data = await apiRequest('/api/ai/chat', { token, method: 'POST', body: { message: aiMessage } })
     setAiReply(data.reply)
   }
 
-  return (
-    <main className="app-shell">
-      <aside className="sidebar">
-        <div>
-          <p className="eyebrow">Distributed Systems</p>
+  if (!token) {
+    return (
+      <main className="login-page">
+        <form className="panel login-panel" onSubmit={submitLogin}>
           <h1>Helpdesk Management</h1>
+          <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+          <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+          <button type="submit">Login</button>
+          {error && <p className="error">{error}</p>}
+        </form>
+      </main>
+    )
+  }
+
+  return (
+    <main className="app">
+      <header>
+        <div>
+          <h1>Helpdesk Management</h1>
+          <p>{user.name} / {user.role}</p>
         </div>
         <nav>
-          <a href="#tickets">Tickets</a>
-          <a href="#search">Search</a>
-          <a href="#ai">AI Module</a>
-          <a href="http://localhost:4000/api-docs" target="_blank">Swagger</a>
+          <a href={`${API_BASE_URL}/api-docs`} target="_blank" rel="noreferrer">Swagger</a>
+          <button onClick={logout}>Logout</button>
         </nav>
-      </aside>
+      </header>
 
-      <section className="workspace">
-        <header className="topbar">
-          <div>
-            <strong>{user ? user.name : 'Demo login'}</strong>
-            <span>{user ? `${user.role} tenant ${user.tenantId}` : 'React Context auth state'}</span>
+      {error && <p className="error">{error}</p>}
+
+      <section className="grid">
+        <div className="panel">
+          <h2>Tickets</h2>
+          <input placeholder="Search tickets" value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} />
+          <div className="ticket-list">
+            {tickets.map((ticket) => (
+              <button key={ticket.id} className={ticket.id === selectedTicket?.id ? 'selected' : ''} onClick={() => setSelectedTicket(ticket)}>
+                <strong>#{ticket.id} {ticket.title}</strong>
+                <span>{ticket.status} / {ticket.priority}</span>
+              </button>
+            ))}
           </div>
-          {token && <button onClick={logout}>Logout</button>}
-        </header>
+        </div>
 
-        {!token ? (
-          <form className="panel login-panel" onSubmit={submitLogin}>
-            <h2>Login</h2>
-            <label>
-              Email
-              <input value={email} onChange={(event) => setEmail(event.target.value)} />
-            </label>
-            <label>
-              Password
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-            </label>
-            <button type="submit">Login</button>
-            {error && <p className="error">{error}</p>}
-          </form>
-        ) : (
-          <>
-            <section id="tickets" className="metrics">
-              <article>
-                <span>REST endpoints</span>
-                <strong>70+</strong>
-              </article>
-              <article>
-                <span>Models</span>
-                <strong>22</strong>
-              </article>
-              <article>
-                <span>Tenancy</span>
-                <strong>tenantId</strong>
-              </article>
-              <article>
-                <span>Cache</span>
-                <strong>In memory</strong>
-              </article>
-            </section>
-
-            <section id="search" className="panel">
-              <div className="panel-heading">
-                <h2>Tickets</h2>
-                <input placeholder="Search or filter tickets" value={search} onChange={(event) => setSearch(event.target.value)} />
-              </div>
-              <div className="table">
-                {tickets.map((ticket) => (
-                  <div className="row" key={ticket.id}>
-                    <span>#{ticket.id}</span>
-                    <strong>{ticket.title}</strong>
-                    <span>{ticket.status}</span>
-                    <span>{ticket.priority}</span>
-                  </div>
+        <div className="panel">
+          <h2>{selectedTicket?.title || 'Ticket detail'}</h2>
+          {selectedTicket && (
+            <>
+              <div className="status-row">
+                {statuses.map((status) => (
+                  <button key={status} className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>
+                    {status.replace('_', ' ')}
+                  </button>
                 ))}
               </div>
-            </section>
-
-            <section id="ai" className="panel ai-panel">
-              <h2>OpenAI Module</h2>
-              <div className="ai-controls">
-                <input value={aiMessage} onChange={(event) => setAiMessage(event.target.value)} />
-                <button onClick={askAi}>Ask AI</button>
+              <p>{selectedTicket.description || selectedTicket.category}</p>
+              <div className="comments">
+                {comments.map((comment) => <p key={comment.id}>{comment.body}</p>)}
               </div>
-              {aiReply && <p className="ai-reply">{aiReply}</p>}
-            </section>
-          </>
-        )}
+              <form className="inline-form" onSubmit={addComment}>
+                <input name="comment" placeholder="Add comment" />
+                <button type="submit">Add</button>
+              </form>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Create Ticket</h2>
+        <form className="ticket-form" onSubmit={createTicket}>
+          <input placeholder="Title" value={newTicket.title} onChange={(event) => setNewTicket({ ...newTicket, title: event.target.value })} />
+          <input placeholder="Description" value={newTicket.description} onChange={(event) => setNewTicket({ ...newTicket, description: event.target.value })} />
+          <select value={newTicket.priority} onChange={(event) => setNewTicket({ ...newTicket, priority: event.target.value })}>
+            <option>High</option>
+            <option>Medium</option>
+            <option>Low</option>
+          </select>
+          <input placeholder="Category" value={newTicket.category} onChange={(event) => setNewTicket({ ...newTicket, category: event.target.value })} />
+          <button type="submit">Create</button>
+        </form>
+      </section>
+
+      <section className="grid">
+        <form className="panel" onSubmit={searchAll}>
+          <h2>Search</h2>
+          <div className="inline-form">
+            <input value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} />
+            <button type="submit">Search</button>
+          </div>
+          {searchResult && <p>{searchResult.cached ? 'Cached' : 'Fresh'} results: {searchResult.results.length}</p>}
+        </form>
+
+        <div className="panel">
+          <h2>AI</h2>
+          <div className="inline-form">
+            <input value={aiMessage} onChange={(event) => setAiMessage(event.target.value)} />
+            <button onClick={askAi}>Ask</button>
+          </div>
+          {aiReply && <p>{aiReply}</p>}
+        </div>
       </section>
     </main>
   )

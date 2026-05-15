@@ -2,27 +2,54 @@
 
 | # | Kerkesa | Status |
 |---|---|---|
-| 1 | Arkitektura klient-server | Backend dhe frontend jane te ndara. |
-| 2 | HTTP/HTTPS REST | Express API me REST endpoints. |
-| 3 | Minimum 20 endpoints | Swagger gjeneron 115 operacione. |
+| 1 | Arkitektura klient-server | `frontend` dhe `backend` jane projekte te ndara dhe komunikojne vetem me API. |
+| 2 | HTTP/HTTPS REST | Express REST API me JSON dhe metodat `GET`, `POST`, `PUT`, `PATCH`, `DELETE`. |
+| 3 | Minimum 20 endpoints | 22 resource CRUD + auth/search/AI/jobs/ticket workflow. |
 | 4 | RESTful framework | Node.js + Express. |
-| 5 | OOP | Modelet, repository, cache dhe queue jane klasa. |
+| 5 | Programimi OOP | `MemoryRepository`, `PostgresRepository`, cache classes, queue class dhe store classes. |
 | 6 | Swagger | `/api-docs` dhe `/api-docs.json`. |
-| 7 | ORM dhe databaza | Repository/ORM demo ne memorie; i zevendesueshem me Prisma/Sequelize. |
-| 8 | Auth dhe autorizim | Login/register, token, role checks per admin resources. |
-| 9 | Middleware | Logging/audit dhe auth middleware. |
-| 10 | React + Context | `AuthProvider` dhe `useAuth`. |
-| 11 | Testim + CI/CD | `backend/server.test.js` dhe GitHub Actions workflow. |
-| 12 | Minimum 20 modele/migrime | 22 modele dhe `backend/migrations/001_initial_schema.json`. |
-| 13 | Dokumentim | README + ky checklist. |
-| 14 | Menaxhim projekti | Mund te lidhet me GitHub Projects/Jira; backlog rekomandohet ne Issues. |
-| 15 | Git + PR reviews | Workflow i projektit parashikon PR dhe CI. |
-| 16 | OpenAI LLM | `/api/ai/chat` perdor OpenAI Responses API kur ka `OPENAI_API_KEY`. |
-| 17 | Caching | `CacheService` per `/api/search`. |
-| 18 | Background jobs | `BackgroundQueue` dhe `/api/jobs`. |
-| 19 | Multi-tenancy | `tenantId` ne te gjitha resource-t. |
-| 20 | Search/filtering | `q` dhe query filters ne list endpoints + `/api/search`. |
+| 7 | ORM dhe databaza | Repository/ORM i thjeshte mbi `pg`; runtime perdor PostgreSQL kur vendoset `DATABASE_URL`. |
+| 8 | Auth dhe autorizim | Login/register, token HMAC dhe role checks per admin resources/status workflow. |
+| 9 | Middleware | Auth middleware dhe audit/logging middleware. |
+| 10 | Frontend React + Context | React app me `AuthProvider`, `AuthContext`, `useAuth`. |
+| 11 | Testimi + CI/CD | Backend API tests, frontend lint/build dhe GitHub Actions workflow. |
+| 12 | Minimum 20 modele/migrime | 22 modele ne `001_initial_schema.json`; SQL migration krijon 22 tabela PostgreSQL. |
+| 13 | Dokumentimi i Projektit | README, checklist dhe Swagger. |
+| 14 | Menaxhimi i Projektit | Backlog i ndare per GitHub Projects/Issues. |
+| 15 | Git dhe bashkepunimi | Repo ne GitHub, PR workflow dhe CI. |
+| 16 | Integrimi me OpenAI | `/api/ai/chat` thirret me `OPENAI_API_KEY` ose kthen demo reply. |
+| 17 | Caching Redis | `RedisCache` perdor Redis per `/api/search`; ka fallback memory per test/dev pa Redis. |
+| 18 | Background jobs | `BackgroundQueue` dhe `/api/jobs`; status/comment/AI krijojne jobs. |
+| 19 | Multi-tenancy | `tenantId` izolon kompanite/perdoruesit ne repository dhe API. |
+| 20 | Search/filtering | Query `q`, filters ne list endpoints dhe global `/api/search`. |
 
-## Shenim per prodhim
+## Stack i kerkuar
 
-Ky version eshte MVP akademik. Per dorezim me databaze reale, repository ne memorie mund te zevendesohet me Prisma ose Sequelize pa ndryshuar kontraten REST te frontend-it.
+- React
+- Node.js
+- PostgreSQL
+- Redis
+
+## Komandat
+
+```bash
+docker compose up -d postgres redis
+cd backend
+copy .env.example .env
+npm install
+npm run dev
+```
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+```bash
+cd backend
+npm test
+cd ../frontend
+npm run lint
+npm run build
+```

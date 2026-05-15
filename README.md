@@ -1,30 +1,35 @@
 # Helpdesk Management System
 
-Projekt demo per lenden **Sistemet e Shperndara 2025/26**.
+Projekt per lenden **Sistemet e Shperndara 2025/26**.
 
-## Arkitektura
+Platforme per menaxhimin e tiketave te supportit per kompani te ndryshme. Perdoruesit raportojne probleme, ndjekin statusin e kerkesave dhe komunikojne me agjentet e supportit.
 
-- `backend`: Express REST API, klient/server te ndare, komunikim vetem me HTTP.
+## Teknologjite
+
+- React
+- Node.js + Express
+- PostgreSQL
+- Redis
+
+## Struktura
+
+- `backend`: REST API, auth, ticket management, PostgreSQL repository layer, Redis cache.
 - `frontend`: React + Context API.
-- Multi-tenancy realizohet me `tenantId` ne cdo entitet.
-- Dokumentimi API: `http://localhost:4000/api-docs`.
+- `docker-compose.yml`: PostgreSQL dhe Redis per zhvillim lokal.
+- `backend/migrations`: schema SQL dhe lista e 22 modeleve.
 
-## Backend
+## Nisja Lokale
+
+```bash
+docker compose up -d postgres redis
+```
 
 ```bash
 cd backend
+copy .env.example .env
 npm install
 npm run dev
 ```
-
-Kredenciale demo:
-
-- `admin@demo.com` / `admin123`
-- `agent@demo.com` / `agent123`
-
-API perfshin login/register, 20+ burime REST, search/filtering, cache ne memorie, background jobs, audit logging middleware dhe endpoint AI.
-
-## Frontend
 
 ```bash
 cd frontend
@@ -32,17 +37,44 @@ npm install
 npm run dev
 ```
 
+URL-te kryesore:
+
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:4000`
+- Swagger: `http://localhost:4000/api-docs`
+
+Kredenciale demo:
+
+- `admin@demo.com` / `admin123`
+- `agent@demo.com` / `agent123`
+
+## API
+
+API perfshin:
+
+- login/register dhe `/api/auth/me`
+- CRUD per 22 resource
+- ticket comments dhe status updates
+- search/filtering me Redis cache
+- background jobs
+- OpenAI endpoint `/api/ai/chat`
+- Swagger docs
+
 ## Testet
 
 ```bash
 cd backend
 npm test
-cd ../frontend
+```
+
+```bash
+cd frontend
+npm run lint
 npm run build
 ```
 
-## Modelet
+Testet backend perdorin nje store ne memorie per te qene te thjeshta ne CI. Kur vendoset `DATABASE_URL`, aplikacioni real perdor PostgreSQL; kur vendoset `REDIS_URL`, kerkimi cache-ohet ne Redis.
 
-Projekti ka mbi 20 modele te strukturuara: Tenant, User, Role, Permission, Department, Team, AgentProfile, Customer, ServiceCatalog, SlaPolicy, Priority, Category, Ticket, TicketComment, TicketAttachment, TicketHistory, KnowledgeArticle, Notification, AuditLog, AiConversation, CacheEntry dhe BackgroundJob.
+## Shtrim Projekti
 
-Ne kete version demo, repository/ORM eshte implementuar ne memorie me klasa OOP. Per prodhim mund te zevendesohet me Prisma/Sequelize dhe migrime SQL duke ruajtur te njejtat endpoint-e.
+Backlog-u ne GitHub Projects mund te ndahet sipas ketyre pjeseve: auth/roles, PostgreSQL schema, multi-tenancy, ticket CRUD, comments/status updates, search/filtering, Redis cache, OpenAI, Swagger, frontend, tests/CI dhe dokumentim.
