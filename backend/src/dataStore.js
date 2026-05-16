@@ -1,34 +1,60 @@
 const bcrypt = require('bcryptjs');
 
 const resourceConfigs = [
-  { route: 'tenants', property: 'tenants', table: 'tenants', tenantScoped: false },
-  { route: 'users', property: 'users', table: 'users' },
-  { route: 'roles', property: 'roles', table: 'roles' },
-  { route: 'permissions', property: 'permissions', table: 'permissions' },
-  { route: 'departments', property: 'departments', table: 'departments' },
-  { route: 'teams', property: 'teams', table: 'teams' },
-  { route: 'agent-profiles', property: 'agentProfiles', table: 'agent_profiles' },
-  { route: 'customers', property: 'customers', table: 'customers' },
-  { route: 'services', property: 'services', table: 'services' },
-  { route: 'sla-policies', property: 'slaPolicies', table: 'sla_policies' },
-  { route: 'priorities', property: 'priorities', table: 'priorities' },
-  { route: 'categories', property: 'categories', table: 'categories' },
-  { route: 'tickets', property: 'tickets', table: 'tickets' },
-  { route: 'comments', property: 'comments', table: 'ticket_comments' },
-  { route: 'attachments', property: 'attachments', table: 'ticket_attachments' },
-  { route: 'histories', property: 'histories', table: 'ticket_histories' },
-  { route: 'articles', property: 'articles', table: 'knowledge_articles' },
-  { route: 'notifications', property: 'notifications', table: 'notifications' },
-  { route: 'audit-logs', property: 'auditLogs', table: 'audit_logs' },
-  { route: 'ai-conversations', property: 'aiConversations', table: 'ai_conversations' },
-  { route: 'cache-entries', property: 'cacheEntries', table: 'cache_entries' },
-  { route: 'jobs', property: 'jobs', table: 'background_jobs' },
+  { route: 'tenants', property: 'tenants', table: 'tenants', tenantScoped: false, fields: ['name', 'slug'] },
+  { route: 'users', property: 'users', table: 'users', fields: ['roleId', 'name', 'email', 'password', 'role'] },
+  { route: 'roles', property: 'roles', table: 'roles', fields: ['name'] },
+  { route: 'permissions', property: 'permissions', table: 'permissions', fields: ['roleId', 'name'] },
+  { route: 'departments', property: 'departments', table: 'departments', fields: ['name'] },
+  { route: 'teams', property: 'teams', table: 'teams', fields: ['departmentId', 'name'] },
+  { route: 'agent-profiles', property: 'agentProfiles', table: 'agent_profiles', fields: ['userId', 'teamId', 'title', 'active'] },
+  { route: 'customers', property: 'customers', table: 'customers', fields: ['name', 'email', 'company'] },
+  { route: 'services', property: 'services', table: 'services', fields: ['departmentId', 'name'] },
+  { route: 'sla-policies', property: 'slaPolicies', table: 'sla_policies', fields: ['name', 'priority', 'responseHours', 'resolutionHours'] },
+  { route: 'priorities', property: 'priorities', table: 'priorities', fields: ['name', 'rank', 'responseHours'] },
+  { route: 'categories', property: 'categories', table: 'categories', fields: ['name'] },
+  { route: 'tickets', property: 'tickets', table: 'tickets', fields: ['customerId', 'assigneeId', 'serviceId', 'title', 'description', 'status', 'priority', 'category', 'closedAt'] },
+  { route: 'comments', property: 'comments', table: 'ticket_comments', fields: ['ticketId', 'authorId', 'body', 'internal'] },
+  { route: 'attachments', property: 'attachments', table: 'ticket_attachments', fields: ['ticketId', 'fileName', 'url'] },
+  { route: 'histories', property: 'histories', table: 'ticket_histories', fields: ['ticketId', 'action', 'fromStatus', 'toStatus', 'actorId', 'commentId'] },
+  { route: 'articles', property: 'articles', table: 'knowledge_articles', fields: ['title', 'body', 'category', 'published'] },
+  { route: 'notifications', property: 'notifications', table: 'notifications', fields: ['type', 'payload', 'status'] },
+  { route: 'audit-logs', property: 'auditLogs', table: 'audit_logs', fields: ['method', 'path', 'statusCode', 'durationMs'] },
+  { route: 'ai-conversations', property: 'aiConversations', table: 'ai_conversations', fields: ['prompt', 'reply'] },
+  { route: 'cache-entries', property: 'cacheEntries', table: 'cache_entries', fields: ['key', 'value', 'expiresAt'] },
+  { route: 'jobs', property: 'jobs', table: 'background_jobs', fields: ['type', 'payload', 'status', 'result', 'finishedAt'] },
 ];
 
 const specialFields = new Set(['id', 'tenantId', 'createdAt', 'updatedAt']);
 
+function snakeCase(value) {
+  return value.replace(/([A-Z])/g, '_$1').toLowerCase();
+}
+
+function schemaTypeForField(field) {
+  if (['active', 'published', 'internal', 'read'].includes(field)) return 'BOOLEAN';
+  if (['rank', 'responseHours', 'resolutionHours', 'durationMs'].includes(field)) return 'INTEGER';
+  if (['payload', 'value'].includes(field)) return 'JSONB';
+  if (['closedAt', 'finishedAt', 'expiresAt'].includes(field)) return 'TIMESTAMPTZ';
+  return 'TEXT';
+}
+
 function omitSpecialFields(data) {
   return Object.fromEntries(Object.entries(data || {}).filter(([key]) => !specialFields.has(key)));
+}
+
+function buildExplicitValues(data, fields) {
+  const values = {};
+  for (const field of fields || []) {
+    if (specialFields.has(field) || field === 'tenantId') continue;
+    if (data[field] !== undefined) values[field] = data[field];
+  }
+  return values;
+}
+
+function omitExplicitFields(data, fields) {
+  const explicit = new Set(fields || []);
+  return Object.fromEntries(Object.entries(data || {}).filter(([key]) => !explicit.has(key)));
 }
 
 async function hashPassword(password) {
@@ -97,38 +123,68 @@ class PostgresRepository {
   constructor(pool, config) {
     this.pool = pool;
     this.table = config.table;
+    this.config = config;
     this.tenantScoped = config.tenantScoped !== false;
+    this.explicitFields = new Set((config.fields || []).filter((field) => !specialFields.has(field) && field !== 'tenantId'));
   }
 
   rowFromDatabase(row) {
-    return {
+    const record = {
       id: String(row.id),
       tenantId: row.tenant_id || undefined,
-      ...row.data,
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
+      ...row.data,
     };
+    for (const field of this.explicitFields) {
+      const column = snakeCase(field);
+      if (Object.prototype.hasOwnProperty.call(row, column)) {
+        record[field] = row[column];
+      }
+    }
+    return record;
   }
 
   async init() {
     const table = quoteIdentifier(this.table);
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS ${table} (
-        id BIGSERIAL PRIMARY KEY,
-        tenant_id TEXT,
-        data JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )
-    `);
+    const columns = [
+      'id BIGSERIAL PRIMARY KEY',
+      'tenant_id TEXT',
+      ...[...this.explicitFields].map((field) => `${quoteIdentifier(snakeCase(field))} ${schemaTypeForField(field)}`),
+      `data JSONB NOT NULL DEFAULT '{}'::jsonb`,
+      `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+      `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+    ];
+    await this.pool.query(`CREATE TABLE IF NOT EXISTS ${table} (${columns.join(', ')})`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_tenant_idx ON ${table} (tenant_id)`);
+  }
+
+  buildExplicitValues(data) {
+    return buildExplicitValues(data, this.config.fields);
   }
 
   async create(data) {
     const tenantId = this.tenantScoped ? data.tenantId : data.tenantId || null;
+    const rowData = omitSpecialFields(data);
+    const explicitValues = this.buildExplicitValues(rowData);
+    const jsonData = omitExplicitFields(rowData, this.config.fields);
+    const columns = ['tenant_id'];
+    const params = [tenantId || null];
+    const placeholders = ['$1'];
+
+    for (const [field, value] of Object.entries(explicitValues)) {
+      columns.push(quoteIdentifier(snakeCase(field)));
+      params.push(value);
+      placeholders.push(`$${params.length}`);
+    }
+
+    columns.push('data');
+    params.push(jsonData);
+    placeholders.push(`$${params.length}`);
+
     const result = await this.pool.query(
-      `INSERT INTO ${quoteIdentifier(this.table)} (tenant_id, data) VALUES ($1, $2) RETURNING *`,
-      [tenantId || null, omitSpecialFields(data)],
+      `INSERT INTO ${quoteIdentifier(this.table)} (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`,
+      params,
     );
     return this.rowFromDatabase(result.rows[0]);
   }
@@ -161,14 +217,32 @@ class PostgresRepository {
     if (!current) return null;
     const next = { ...omitSpecialFields(current), ...omitSpecialFields(data) };
     const nextTenantId = this.tenantScoped ? data.tenantId || current.tenantId : data.tenantId || null;
+    const explicitValues = this.buildExplicitValues(next);
+    const jsonData = omitExplicitFields(next, this.config.fields);
+
+    const sets = ['tenant_id = $1', 'data = $2', 'updated_at = now()'];
+    const params = [nextTenantId || null, jsonData];
+
+    for (const [field, value] of Object.entries(explicitValues)) {
+      sets.push(`${quoteIdentifier(snakeCase(field))} = $${params.length + 1}`);
+      params.push(value);
+    }
+
+    params.push(id);
+    const where = ['id = $' + params.length];
+    if (tenantId && this.tenantScoped) {
+      params.push(tenantId);
+      where.push(`tenant_id = $${params.length}`);
+    }
+
     const result = await this.pool.query(
       `UPDATE ${quoteIdentifier(this.table)}
-       SET tenant_id = $1, data = $2, updated_at = now()
-       WHERE id = $3
+       SET ${sets.join(', ')}
+       WHERE ${where.join(' AND ')}
        RETURNING *`,
-      [nextTenantId || null, next, id],
+      params,
     );
-    return this.rowFromDatabase(result.rows[0]);
+    return result.rows[0] ? this.rowFromDatabase(result.rows[0]) : null;
   }
 
   async delete(id, tenantId) {
