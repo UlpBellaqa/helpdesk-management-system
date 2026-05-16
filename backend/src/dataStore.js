@@ -1,3 +1,5 @@
+const bcrypt = require('bcryptjs');
+
 const resourceConfigs = [
   { route: 'tenants', property: 'tenants', table: 'tenants', tenantScoped: false },
   { route: 'users', property: 'users', table: 'users' },
@@ -27,6 +29,10 @@ const specialFields = new Set(['id', 'tenantId', 'createdAt', 'updatedAt']);
 
 function omitSpecialFields(data) {
   return Object.fromEntries(Object.entries(data || {}).filter(([key]) => !specialFields.has(key)));
+}
+
+async function hashPassword(password) {
+  return bcrypt.hash(password || '', 10);
 }
 
 function matches(row, { tenantId, search, filters = {} } = {}) {
@@ -251,8 +257,8 @@ class BaseStore {
     const agentRole = await this.roles.create({ tenantId: tenant.id, name: 'agent' });
     await this.permissions.create({ tenantId: tenant.id, roleId: adminRole.id, name: 'system:admin' });
     await this.permissions.create({ tenantId: tenant.id, roleId: agentRole.id, name: 'tickets:manage' });
-    await this.users.create({ tenantId: tenant.id, name: 'Admin User', email: 'admin@demo.com', password: 'admin123', role: 'admin', roleId: adminRole.id });
-    const agent = await this.users.create({ tenantId: tenant.id, name: 'Agent User', email: 'agent@demo.com', password: 'agent123', role: 'agent', roleId: agentRole.id });
+    await this.users.create({ tenantId: tenant.id, name: 'Admin User', email: 'admin@demo.com', password: await hashPassword('admin123'), role: 'admin', roleId: adminRole.id });
+    const agent = await this.users.create({ tenantId: tenant.id, name: 'Agent User', email: 'agent@demo.com', password: await hashPassword('agent123'), role: 'agent', roleId: agentRole.id });
     const department = await this.departments.create({ tenantId: tenant.id, name: 'IT Support' });
     const team = await this.teams.create({ tenantId: tenant.id, name: 'Level 1', departmentId: department.id });
     await this.agentProfiles.create({ tenantId: tenant.id, userId: agent.id, teamId: team.id, title: 'Support Agent', active: true });

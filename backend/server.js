@@ -1,7 +1,8 @@
-const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const jwt = require('jsonwebtoken');
 const { createStore, resourceConfigs } = require('./src/dataStore');
 const { buildSwaggerSpec, swaggerHtml } = require('./src/swagger');
 
@@ -9,23 +10,31 @@ dotenv.config();
 
 const PORT = process.env.PORT || 4000;
 const TOKEN_SECRET = process.env.TOKEN_SECRET || 'dev-secret';
+const TOKEN_EXPIRY = process.env.TOKEN_EXPIRY || '8h';
 const adminResources = new Set(['users', 'roles', 'permissions', 'tenants']);
 
 function signToken(payload) {
-  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = crypto.createHmac('sha256', TOKEN_SECRET).update(body).digest('base64url');
-  return `${body}.${signature}`;
+  return jwt.sign(payload, TOKEN_SECRET, { expiresIn: TOKEN_EXPIRY });
 }
 
 function verifyToken(token) {
   try {
-    const [body, signature] = String(token || '').split('.');
-    const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(body || '').digest('base64url');
-    if (!body || !signature || signature !== expected) return null;
-    return JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    return jwt.verify(token, TOKEN_SECRET);
   } catch {
     return null;
   }
+}
+
+async function hashPassword(password) {
+  return bcrypt.hash(password || '', 10);
+}
+
+async function verifyPassword(password, storedPassword) {
+  if (!storedPassword) return false;
+  if (storedPassword.startsWith('$2a$') || storedPassword.startsWith('$2b$') || storedPassword.startsWith('$2y$')) {
+    return bcrypt.compare(password, storedPassword);
+  }
+  return password === storedPassword;
 }
 
 function asyncRoute(handler) {
@@ -33,11 +42,11 @@ function asyncRoute(handler) {
 }
 
 function publicRoute(req) {
-  return ['/health', '/api/auth/login', '/api/auth/register', '/api-docs', '/api-docs.json'].includes(req.path);
+  return ['/', '/health', '/api/auth/login', '/api/auth/register', '/api-docs', '/api-docs.json'].includes(req.path);
 }
 
 function tenantId(req) {
-  return req.user?.tenantId || req.body.tenantId || req.query.tenantId;
+  return req.user?.tenantId;
 }
 
 function safeUser(user) {
@@ -80,26 +89,31 @@ function createApp(store) {
     return next();
   });
 
+  app.get('/', (req, res) => res.redirect('/api-docs'));
   app.get('/health', (req, res) => res.json({ status: 'ok', service: 'helpdesk-api' }));
   app.get('/api-docs.json', (req, res) => res.json(buildSwaggerSpec(PORT)));
   app.get('/api-docs', (req, res) => res.type('html').send(swaggerHtml()));
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
-    const tenant = req.body.tenantId
-      ? await store.tenants.findById(req.body.tenantId)
-      : await store.tenants.create({ name: req.body.companyName || 'New Company', slug: req.body.companySlug || `tenant-${Date.now()}` });
-    if (!tenant) return res.status(400).json({ message: 'Tenant does not exist' });
+    if (!req.body.email || !req.body.password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+
+    const tenant = await store.tenants.create({ name: req.body.companyName || 'New Company', slug: req.body.companySlug || `tenant-${Date.now()}` });
+    if (!tenant) return res.status(400).json({ message: 'Tenant could not be created' });
 
     const exists = (await store.users.list({ filters: { email: req.body.email } }))[0];
     if (exists) return res.status(409).json({ message: 'Email already exists' });
 
     const requestedRole = req.body.role || 'customer';
     const role = ['admin', 'agent'].includes(requestedRole) ? 'customer' : requestedRole;
+    const hashedPassword = await hashPassword(req.body.password);
+
     const user = await store.users.create({
       tenantId: tenant.id,
       name: req.body.name,
       email: req.body.email,
-      password: req.body.password,
+      password: hashedPassword,
       role,
     });
     const token = signToken({ id: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
@@ -108,8 +122,10 @@ function createApp(store) {
 
   app.post('/api/auth/login', asyncRoute(async (req, res) => {
     const users = await store.users.list({ filters: { email: req.body.email } });
-    const user = users.find((row) => row.password === req.body.password);
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
+    const user = users[0];
+    if (!user || !(await verifyPassword(req.body.password, user.password))) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
     const token = signToken({ id: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
     return res.json({ token, user: safeUser(user) });
   }));
