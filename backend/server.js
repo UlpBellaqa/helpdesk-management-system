@@ -231,7 +231,7 @@ function createApp(store) {
 
     app.post(`/api/${resource}`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
-      const payload = resource === 'tenants' ? req.body : { ...req.body, tenantId: req.body.tenantId || tenantId(req) };
+      const payload = resource === 'tenants' ? req.body : { ...req.body, tenantId: tenantId(req) };
       return res.status(201).json(await repo.create(payload));
     }));
 
