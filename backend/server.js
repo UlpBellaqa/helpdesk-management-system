@@ -50,6 +50,18 @@ function tenantId(req) {
   return req.user?.tenantId;
 }
 
+function prepareResourcePayload(req, resource) {
+  if (resource === 'tenants') return req.body;
+  return { ...req.body, tenantId: tenantId(req) };
+}
+
+function sanitizeUpdatePayload(req, resource) {
+  if (resource === 'tenants') return req.body;
+  const payload = { ...req.body };
+  delete payload.tenantId;
+  return payload;
+}
+
 function safeUser(user) {
   if (!user) return null;
   const { password, ...rest } = user;
@@ -231,7 +243,7 @@ function createApp(store) {
 
     app.post(`/api/${resource}`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
-      const payload = resource === 'tenants' ? req.body : { ...req.body, tenantId: req.body.tenantId || tenantId(req) };
+      const payload = prepareResourcePayload(req, resource);
       return res.status(201).json(await repo.create(payload));
     }));
 
@@ -243,7 +255,8 @@ function createApp(store) {
 
     app.put(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
-      const row = await repo.update(req.params.id, req.body, tenantId(req));
+      const payload = sanitizeUpdatePayload(req, resource);
+      const row = await repo.update(req.params.id, payload, tenantId(req));
       return row ? res.json(row) : notFound(res);
     }));
 
