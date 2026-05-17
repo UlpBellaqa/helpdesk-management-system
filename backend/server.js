@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const { createStore, resourceConfigs } = require('./src/dataStore');
 const { buildSwaggerSpec, swaggerHtml } = require('./src/swagger');
 const { validateLoginRequest, validateRegisterRequest } = require('./src/validation');
+const { ApiError, BadRequestError, UnauthorizedError, ForbiddenError } = require('./src/errors');
 
 dotenv.config();
 
@@ -97,7 +98,7 @@ function createApp(store) {
     if (publicRoute(req)) return next();
     const token = req.headers.authorization?.replace('Bearer ', '');
     const user = verifyToken(token);
-    if (!user) return res.status(401).json({ message: 'Unauthorized' });
+    if (!user) return next(new UnauthorizedError());
     req.user = user;
     return next();
   });
@@ -110,17 +111,17 @@ function createApp(store) {
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
     const validationError = validateRegisterRequest(req.body);
     if (validationError) {
-      return res.status(400).json({ message: validationError });
+      throw new BadRequestError(validationError);
     }
 
     const exists = (await store.users.list({ filters: { email: req.body.email } }))[0];
-    if (exists) return res.status(409).json({ message: 'Email already exists' });
+    if (exists) throw new BadRequestError('Email already exists');
 
     const tenant = await store.tenants.create({ 
       name: req.body.companyName, 
       slug: req.body.companySlug || `tenant-${Date.now()}` 
     });
-    if (!tenant) return res.status(400).json({ message: 'Tenant could not be created' });
+    if (!tenant) throw new BadRequestError('Tenant could not be created');
 
     const requestedRole = req.body.role || 'customer';
     const role = ['admin', 'agent'].includes(requestedRole) ? 'customer' : requestedRole;
@@ -140,13 +141,13 @@ function createApp(store) {
   app.post('/api/auth/login', asyncRoute(async (req, res) => {
     const validationError = validateLoginRequest(req.body);
     if (validationError) {
-      return res.status(400).json({ message: validationError });
+      throw new BadRequestError(validationError);
     }
 
     const users = await store.users.list({ filters: { email: req.body.email } });
     const user = users[0];
     if (!user || !(await verifyPassword(req.body.password, user.password))) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      throw new UnauthorizedError('Invalid credentials');
     }
     const token = signToken({ id: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
     return res.json({ token, user: safeUser(user) });
@@ -268,7 +269,12 @@ function createApp(store) {
 
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
-    return res.status(500).json({ message: error.message || 'Server error' });
+    const statusCode = error instanceof ApiError ? error.statusCode : 500;
+    const payload = {
+      message: error.message || 'Server error',
+      ...(error.details ? { details: error.details } : {}),
+    };
+    return res.status(statusCode).json(payload);
   });
 
   return app;
