@@ -5,6 +5,7 @@ const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const { createStore, resourceConfigs } = require('./src/dataStore');
 const { buildSwaggerSpec, swaggerHtml } = require('./src/swagger');
+const { validateLoginRequest, validateRegisterRequest } = require('./src/validation');
 
 dotenv.config();
 
@@ -95,15 +96,19 @@ function createApp(store) {
   app.get('/api-docs', (req, res) => res.type('html').send(swaggerHtml()));
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
-    if (!req.body.email || !req.body.password) {
-      return res.status(400).json({ message: 'Email and password are required' });
+    const validationError = validateRegisterRequest(req.body);
+    if (validationError) {
+      return res.status(400).json({ message: validationError });
     }
-
-    const tenant = await store.tenants.create({ name: req.body.companyName || 'New Company', slug: req.body.companySlug || `tenant-${Date.now()}` });
-    if (!tenant) return res.status(400).json({ message: 'Tenant could not be created' });
 
     const exists = (await store.users.list({ filters: { email: req.body.email } }))[0];
     if (exists) return res.status(409).json({ message: 'Email already exists' });
+
+    const tenant = await store.tenants.create({ 
+      name: req.body.companyName, 
+      slug: req.body.companySlug || `tenant-${Date.now()}` 
+    });
+    if (!tenant) return res.status(400).json({ message: 'Tenant could not be created' });
 
     const requestedRole = req.body.role || 'customer';
     const role = ['admin', 'agent'].includes(requestedRole) ? 'customer' : requestedRole;
@@ -121,6 +126,11 @@ function createApp(store) {
   }));
 
   app.post('/api/auth/login', asyncRoute(async (req, res) => {
+    const validationError = validateLoginRequest(req.body);
+    if (validationError) {
+      return res.status(400).json({ message: validationError });
+    }
+
     const users = await store.users.list({ filters: { email: req.body.email } });
     const user = users[0];
     if (!user || !(await verifyPassword(req.body.password, user.password))) {
