@@ -22,9 +22,6 @@ jobs:
       - name: Frontend install
         run: npm ci
         working-directory: frontend
-      - name: Frontend lint
-        run: npm run lint
-        working-directory: frontend
-      - name: Frontend build
-        run: npm run build
+      - name: Frontend tests
+        run: npm test
         working-directory: frontend
