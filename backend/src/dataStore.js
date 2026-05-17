@@ -103,7 +103,9 @@ class MemoryRepository {
   async update(id, data, tenantId) {
     const row = await this.findById(id, tenantId);
     if (!row) return null;
-    Object.assign(row, data, { updatedAt: new Date().toISOString() });
+    const sanitized = { ...data };
+    if (this.tenantScoped) delete sanitized.tenantId;
+    Object.assign(row, sanitized, { updatedAt: new Date().toISOString() });
     return row;
   }
 
@@ -216,7 +218,7 @@ class PostgresRepository {
     const current = await this.findById(id, tenantId);
     if (!current) return null;
     const next = { ...omitSpecialFields(current), ...omitSpecialFields(data) };
-    const nextTenantId = this.tenantScoped ? data.tenantId || current.tenantId : data.tenantId || null;
+    const nextTenantId = this.tenantScoped ? current.tenantId : data.tenantId || null;
     const explicitValues = this.buildExplicitValues(next);
     const jsonData = omitExplicitFields(next, this.config.fields);
 
