@@ -1,8 +1,8 @@
 :root {
-  --background: #f8fafc;
+  --background: #f7f7f5;
   --foreground: #020617;
   --card: #ffffff;
-  --card-muted: #f8fafc;
+  --card-muted: #f3f4f6;
   --muted: #64748b;
   --border: #e2e8f0;
   --input: #cbd5e1;
@@ -11,7 +11,7 @@
   --danger: #dc2626;
   --ring: rgba(15, 23, 42, 0.12);
   --shadow: none;
-  --radius: 14px;
+  --radius: 8px;
 }
 
 .theme-dark {
@@ -65,14 +65,14 @@
   gap: 22px;
   padding: 18px;
   border-right: 1px solid var(--border);
-  background: var(--card);
+  background: #f2f2ef;
 }
 
 .workspace {
   display: grid;
   align-content: start;
   gap: 18px;
-  width: min(100%, 1440px);
+  width: min(100%, 1180px);
   margin: 0 auto;
   padding: 22px;
 }
@@ -203,7 +203,7 @@
   min-height: 72px;
   padding: 16px 18px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 8px;
   background: var(--card);
 }
 
@@ -778,4 +778,215 @@ button {
   .main-nav {
     grid-template-columns: 1fr;
   }
+}
+
+/* compact Claude/shadcn-like pass */
+body {
+  font-size: 13px;
+}
+
+.app {
+  grid-template-columns: 236px minmax(0, 1fr);
+}
+
+.sidebar {
+  gap: 14px;
+  padding: 12px;
+}
+
+.workspace {
+  gap: 12px;
+  width: min(100%, 1080px);
+  padding: 16px;
+}
+
+.brand {
+  min-height: 34px;
+}
+
+.brand span,
+.login-brand span,
+.sidebar-user > span {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  font-size: 0.78rem;
+}
+
+.main-nav {
+  gap: 3px;
+}
+
+.main-nav button,
+.sidebar-user {
+  min-height: 32px;
+  border-radius: 7px;
+  padding: 0 9px;
+  font-size: 0.88rem;
+}
+
+.topbar {
+  min-height: 58px;
+  padding: 12px;
+}
+
+.topbar h1 {
+  font-size: 1.12rem;
+}
+
+.topbar p,
+.muted,
+.ticket-list span,
+.detail-head span,
+.meta-grid span,
+.table-row span,
+.empty-state span,
+.setting-row small,
+.timeline span,
+.profile-header small,
+.settings-info-grid span,
+.result-summary span,
+.result-summary p {
+  font-size: 0.78rem;
+}
+
+.metric-grid,
+.grid-two,
+.grid-main-side,
+.tickets-layout {
+  gap: 10px;
+}
+
+.grid-main-side {
+  grid-template-columns: minmax(0, 1fr) 300px;
+}
+
+.tickets-layout {
+  grid-template-columns: 280px minmax(390px, 1fr) 280px;
+}
+
+.card,
+.login-card {
+  gap: 10px;
+  padding: 12px;
+}
+
+.metric span {
+  font-size: 0.78rem;
+}
+
+.metric strong {
+  font-size: 1.45rem;
+}
+
+.card-head h2,
+.detail-head h2 {
+  font-size: 0.92rem;
+}
+
+.card-head span,
+.detail-actions > strong {
+  border-radius: 7px;
+  padding: 3px 7px;
+  font-size: 0.7rem;
+}
+
+.side-stack,
+.stack-list,
+.ticket-list,
+.table-list,
+.article-list,
+.comments,
+.timeline,
+.status-list,
+.settings-section,
+.settings-form-grid,
+.settings-info-grid {
+  gap: 7px;
+}
+
+.list-card {
+  min-height: 430px;
+}
+
+.ticket-list {
+  max-height: 470px;
+}
+
+.ticket-list button,
+.stack-list button {
+  min-height: 54px;
+  border-radius: 7px;
+  padding: 9px;
+}
+
+.description,
+.empty-state,
+.assistant-reply,
+.result-summary,
+.meta-grid div,
+.status-list div,
+.comments p,
+.table-row,
+.resource-row,
+.article-list article,
+.timeline div,
+.setting-row,
+.profile-header,
+.settings-info-grid div {
+  border-radius: 7px;
+  padding: 10px;
+}
+
+.status-row,
+.settings-tabs {
+  border-radius: 7px;
+  padding: 3px;
+}
+
+.status-row button,
+.settings-tabs button {
+  min-height: 30px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+input,
+select,
+textarea,
+button,
+.button-link {
+  min-height: 34px;
+  border-radius: 7px;
+  font-size: 0.86rem;
+}
+
+textarea {
+  min-height: 92px;
+}
+
+.danger-button {
+  min-height: 28px;
+  font-size: 0.76rem;
+}
+
+.login-card {
+  width: min(390px, 100%);
+}
+
+.theme-dark .sidebar {
+  background: var(--card);
+}
+
+.theme-dark .main-nav button.active,
+.theme-dark .main-nav button:hover,
+.theme-dark .sidebar-user:hover {
+  border-color: var(--border);
+  background: var(--card-muted);
+  color: var(--foreground);
+}
+
+.theme-dark .sidebar-user {
+  background: transparent;
+  color: var(--foreground);
 }

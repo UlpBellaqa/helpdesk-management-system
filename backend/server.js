@@ -14,6 +14,13 @@ const PORT = process.env.PORT || 4000;
 const TOKEN_SECRET = process.env.TOKEN_SECRET || 'dev-secret';
 const TOKEN_EXPIRY = process.env.TOKEN_EXPIRY || '8h';
 const adminResources = new Set(['users', 'roles', 'permissions', 'tenants']);
+const documentedResourceRoutes = {
+  tickets: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
+  customers: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
+  articles: new Set(['getList', 'postList']),
+  services: new Set(['getList', 'postList']),
+  jobs: new Set(['getList']),
+};
 
 function signToken(payload) {
   return jwt.sign(payload, TOKEN_SECRET, { expiresIn: TOKEN_EXPIRY });
@@ -292,33 +299,36 @@ function createApp(store) {
   }));
 
   Object.entries(resourceMap).forEach(([resource, repo]) => {
-    app.get(`/api/${resource}`, asyncRoute(async (req, res) => {
+    const allowedRoutes = documentedResourceRoutes[resource];
+    if (!allowedRoutes) return;
+
+    if (allowedRoutes.has('getList')) app.get(`/api/${resource}`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const filters = { ...req.query };
       delete filters.q;
       return res.json(await repo.list({ tenantId: tenantId(req), search: req.query.q, filters }));
     }));
 
-    app.post(`/api/${resource}`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('postList')) app.post(`/api/${resource}`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const payload = prepareResourcePayload(req, resource);
       return res.status(201).json(await repo.create(payload));
     }));
 
-    app.get(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('getItem')) app.get(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const row = await repo.findById(req.params.id, tenantId(req));
       return row ? res.json(row) : notFound(res);
     }));
 
-    app.put(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('putItem')) app.put(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const payload = sanitizeUpdatePayload(req, resource);
       const row = await repo.update(req.params.id, payload, tenantId(req));
       return row ? res.json(row) : notFound(res);
     }));
 
-    app.delete(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('deleteItem')) app.delete(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       return (await repo.delete(req.params.id, tenantId(req))) ? res.status(204).send() : notFound(res);
     }));

@@ -49,13 +49,13 @@ test('login protects ticket list', async () => {
   });
 });
 
-test('role authorization protects admin resources', async () => {
+test('undocumented resource endpoints are not exposed', async () => {
   await withServer(async (baseUrl) => {
-    const agent = await login(baseUrl, 'agent@demo.com', 'agent123');
+    const admin = await login(baseUrl);
     const users = await fetch(`${baseUrl}/api/users`, {
-      headers: { Authorization: `Bearer ${agent.token}` },
+      headers: { Authorization: `Bearer ${admin.token}` },
     });
-    assert.equal(users.status, 403);
+    assert.equal(users.status, 404);
   });
 });
 
@@ -78,9 +78,9 @@ test('ticket comments and status updates create history', async () => {
     });
     assert.equal((await status.json()).status, 'in_progress');
 
-    const histories = await fetch(`${baseUrl}/api/histories?ticketId=1`, { headers });
-    const historyRows = await histories.json();
-    assert.ok(historyRows.some((row) => row.action === 'status_changed'));
+    const comments = await fetch(`${baseUrl}/api/tickets/1/comments`, { headers });
+    const commentRows = await comments.json();
+    assert.ok(commentRows.some((row) => row.body === 'Customer confirmed the adapter works.'));
   });
 });
 

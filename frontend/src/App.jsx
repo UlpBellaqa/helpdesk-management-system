@@ -80,7 +80,6 @@ function App() {
   const [newCustomer, setNewCustomer] = useState({ name: '', email: '', company: '' })
   const [newArticle, setNewArticle] = useState({ title: '', body: '', category: 'General', published: true })
   const [newService, setNewService] = useState({ name: '', departmentId: '' })
-  const [newSla, setNewSla] = useState({ name: '', priority: 'High', responseHours: 4, resolutionHours: 24 })
   const [newJob, setNewJob] = useState({ type: 'email', payload: '{"reason":"manual follow-up"}' })
 
   const visibleNavItems = useMemo(() => {
@@ -117,25 +116,22 @@ function App() {
   }
 
   const loadWorkspace = useCallback(async () => {
-    const [summary, customerRows, articleRows, serviceRows, slaRows, jobRows, historyRows, userRows] = await Promise.all([
+    const [summary, customerRows, articleRows, serviceRows, jobRows] = await Promise.all([
       apiRequest('/api/dashboard/summary', { token }),
       apiRequest('/api/customers', { token }),
       apiRequest('/api/articles', { token }),
       apiRequest('/api/services', { token }),
-      apiRequest('/api/sla-policies', { token }),
       apiRequest('/api/jobs', { token }),
-      apiRequest('/api/histories', { token }),
-      user?.role === 'admin' ? apiRequest('/api/users', { token }) : Promise.resolve([]),
     ])
     setDashboard(summary)
     setCustomers(customerRows)
     setArticles(articleRows)
     setServices(serviceRows)
-    setSlaPolicies(slaRows)
+    setSlaPolicies([])
     setJobs(jobRows)
-    setHistories(historyRows.slice(-10).reverse())
-    setUsers(userRows)
-  }, [token, user?.role])
+    setHistories([])
+    setUsers([])
+  }, [token])
 
   async function refreshWorkspace() {
     await Promise.all([loadWorkspace(), reloadTickets()])
@@ -242,12 +238,6 @@ function App() {
     await refreshWorkspace()
   }
 
-  async function deleteComment(commentId) {
-    if (!window.confirm('Delete this comment?')) return
-    await apiRequest(`/api/comments/${commentId}`, { token, method: 'DELETE' })
-    setComments((rows) => rows.filter((comment) => comment.id !== commentId))
-  }
-
   async function deleteResource(resource, id, refresh = loadWorkspace) {
     if (!window.confirm(`Delete this ${resource.replace('-', ' ')}?`)) return
     await apiRequest(`/api/${resource}/${id}`, { token, method: 'DELETE' })
@@ -275,14 +265,6 @@ function App() {
     if (!newService.name.trim()) return
     await apiRequest('/api/services', { token, method: 'POST', body: newService })
     setNewService({ name: '', departmentId: '' })
-    await loadWorkspace()
-  }
-
-  async function createSla(event) {
-    event.preventDefault()
-    if (!newSla.name.trim()) return
-    await apiRequest('/api/sla-policies', { token, method: 'POST', body: newSla })
-    setNewSla({ name: '', priority: 'High', responseHours: 4, resolutionHours: 24 })
     await loadWorkspace()
   }
 
@@ -375,7 +357,7 @@ function App() {
                   <p className="description">{selectedTicket.description || 'No description provided.'}</p>
                   <div className="meta-grid"><div><span>Priority</span><strong>{selectedTicket.priority}</strong></div><div><span>Category</span><strong>{selectedTicket.category || 'General'}</strong></div><div><span>Customer</span><strong>{selectedCustomer?.name || 'Unassigned'}</strong></div></div>
                   <div className="status-row">{statuses.map((status) => <button key={status} className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>{formatLabel(status)}</button>)}</div>
-                  <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className="comment-row"><p>{comment.body}</p><button className="danger-button ghost-danger" onClick={() => deleteComment(comment.id)}>Delete</button></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
+                  <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className="comment-row"><p>{comment.body}</p></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
                   <form className="inline-form" onSubmit={addComment}><input name="comment" placeholder="Add comment..." /><button type="submit">Add</button></form>
                 </>
               ) : <EmptyState title="Select a ticket" text="Details will appear here." />}
@@ -401,15 +383,15 @@ function App() {
 
         {activeView === 'Knowledge' && (
           <section className="grid-main-side">
-            <div className="card"><div className="card-head"><h2>Knowledge base</h2><span>{articles.length}</span></div><div className="article-list">{articles.map((article) => <article key={article.id}><div className="article-head"><span>{article.category}</span><button className="danger-button ghost-danger" onClick={() => deleteResource('articles', article.id)}>Delete</button></div><h3>{article.title}</h3><p>{article.body}</p></article>)}</div></div>
+            <div className="card"><div className="card-head"><h2>Knowledge base</h2><span>{articles.length}</span></div><div className="article-list">{articles.map((article) => <article key={article.id}><div className="article-head"><span>{article.category}</span></div><h3>{article.title}</h3><p>{article.body}</p></article>)}</div></div>
             <form className="card side-card" onSubmit={createArticle}><h2>New article</h2><input placeholder="Title" value={newArticle.title} onChange={(event) => setNewArticle({ ...newArticle, title: event.target.value })} /><input placeholder="Category" value={newArticle.category} onChange={(event) => setNewArticle({ ...newArticle, category: event.target.value })} /><textarea placeholder="Body" value={newArticle.body} onChange={(event) => setNewArticle({ ...newArticle, body: event.target.value })} /><button type="submit">Publish</button></form>
           </section>
         )}
 
         {activeView === 'Services' && (
           <section className="grid-main-side">
-            <div className="grid-two"><div className="card"><div className="card-head"><h2>Services</h2><span>{services.length}</span></div><div className="table-list">{services.map((service) => <div key={service.id} className="resource-row"><div><strong>{service.name}</strong><span>Department #{service.departmentId || 'n/a'} / Service</span></div><button className="danger-button ghost-danger" onClick={() => deleteResource('services', service.id)}>Delete</button></div>)}</div></div><div className="card"><div className="card-head"><h2>SLA policies</h2><span>{slaPolicies.length}</span></div><div className="table-list">{slaPolicies.map((policy) => <div key={policy.id} className="resource-row"><div><strong>{policy.name}</strong><span>{policy.priority} / {policy.responseHours}h response / {policy.resolutionHours}h resolution</span></div><button className="danger-button ghost-danger" onClick={() => deleteResource('sla-policies', policy.id)}>Delete</button></div>)}</div></div></div>
-            <div className="side-stack"><form className="card side-card" onSubmit={createService}><h2>Add service</h2><input placeholder="Service name" value={newService.name} onChange={(event) => setNewService({ ...newService, name: event.target.value })} /><input placeholder="Department ID" value={newService.departmentId} onChange={(event) => setNewService({ ...newService, departmentId: event.target.value })} /><button type="submit">Create</button></form><form className="card side-card" onSubmit={createSla}><h2>Add SLA</h2><input placeholder="Policy name" value={newSla.name} onChange={(event) => setNewSla({ ...newSla, name: event.target.value })} /><select value={newSla.priority} onChange={(event) => setNewSla({ ...newSla, priority: event.target.value })}><option>High</option><option>Medium</option><option>Low</option></select><input type="number" min="1" value={newSla.responseHours} onChange={(event) => setNewSla({ ...newSla, responseHours: Number(event.target.value) })} /><input type="number" min="1" value={newSla.resolutionHours} onChange={(event) => setNewSla({ ...newSla, resolutionHours: Number(event.target.value) })} /><button type="submit">Create SLA</button></form></div>
+            <div className="grid-two"><div className="card"><div className="card-head"><h2>Services</h2><span>{services.length}</span></div><div className="table-list">{services.map((service) => <div key={service.id} className="resource-row"><div><strong>{service.name}</strong><span>Department #{service.departmentId || 'n/a'} / Service</span></div></div>)}</div></div><div className="card"><div className="card-head"><h2>SLA policies</h2><span>{slaPolicies.length}</span></div><div className="table-list">{slaPolicies.map((policy) => <div key={policy.id} className="resource-row"><div><strong>{policy.name}</strong><span>{policy.priority} / {policy.responseHours}h response / {policy.resolutionHours}h resolution</span></div></div>)}</div></div></div>
+            <div className="side-stack"><form className="card side-card" onSubmit={createService}><h2>Add service</h2><input placeholder="Service name" value={newService.name} onChange={(event) => setNewService({ ...newService, name: event.target.value })} /><input placeholder="Department ID" value={newService.departmentId} onChange={(event) => setNewService({ ...newService, departmentId: event.target.value })} /><button type="submit">Create</button></form></div>
           </section>
         )}
 
@@ -423,7 +405,7 @@ function App() {
         {activeView === 'Activity' && (
           <section className="grid-main-side">
             <div className="card"><div className="card-head"><h2>Ticket history</h2><span>{histories.length}</span></div><div className="timeline">{histories.map((history) => <div key={history.id}><strong>{formatLabel(history.action)}</strong><span>Ticket #{history.ticketId}</span></div>)}</div></div>
-            <form className="card side-card" onSubmit={enqueueJob}><h2>Queue job</h2><input value={newJob.type} onChange={(event) => setNewJob({ ...newJob, type: event.target.value })} /><textarea value={newJob.payload} onChange={(event) => setNewJob({ ...newJob, payload: event.target.value })} /><button type="submit">Queue</button><div className="table-list">{jobs.slice(-4).reverse().map((job) => <div key={job.id} className="table-row with-action"><strong>{job.type}</strong><span>{job.status}</span><span>{job.result || 'Pending'}</span><button className="danger-button ghost-danger" onClick={(event) => { event.preventDefault(); deleteResource('jobs', job.id) }}>Delete</button></div>)}</div></form>
+            <form className="card side-card" onSubmit={enqueueJob}><h2>Queue job</h2><input value={newJob.type} onChange={(event) => setNewJob({ ...newJob, type: event.target.value })} /><textarea value={newJob.payload} onChange={(event) => setNewJob({ ...newJob, payload: event.target.value })} /><button type="submit">Queue</button><div className="table-list">{jobs.slice(-4).reverse().map((job) => <div key={job.id} className="table-row with-action"><strong>{job.type}</strong><span>{job.status}</span><span>{job.result || 'Pending'}</span></div>)}</div></form>
           </section>
         )}
 
