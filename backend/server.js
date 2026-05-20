@@ -2,11 +2,13 @@ const bcrypt = require('bcryptjs');
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const jwt = require('jsonwebtoken');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { createStore, resourceConfigs } = require('./src/dataStore');
 const { buildSwaggerSpec, swaggerHtml } = require('./src/swagger');
 const { validateLoginRequest, validateRegisterRequest } = require('./src/validation');
 const { ApiError, BadRequestError, UnauthorizedError, ForbiddenError } = require('./src/errors');
+const { LoggingMiddleware, AuthenticationMiddleware } = require('./src/middleware');
 
 dotenv.config();
 
@@ -14,18 +16,6 @@ const PORT = process.env.PORT || 4000;
 const TOKEN_SECRET = process.env.TOKEN_SECRET || 'dev-secret';
 const TOKEN_EXPIRY = process.env.TOKEN_EXPIRY || '8h';
 const adminResources = new Set(['users', 'roles', 'permissions', 'tenants']);
-
-function signToken(payload) {
-  return jwt.sign(payload, TOKEN_SECRET, { expiresIn: TOKEN_EXPIRY });
-}
-
-function verifyToken(token) {
-  try {
-    return jwt.verify(token, TOKEN_SECRET);
-  } catch {
-    return null;
-  }
-}
 
 async function hashPassword(password) {
   return bcrypt.hash(password || '', 10);
@@ -41,10 +31,6 @@ async function verifyPassword(password, storedPassword) {
 
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
-}
-
-function publicRoute(req) {
-  return ['/', '/health', '/api/auth/login', '/api/auth/register', '/api-docs', '/api-docs.json'].includes(req.path);
 }
 
 function tenantId(req) {
@@ -126,36 +112,50 @@ function createApp(store) {
   const app = express();
   const resourceMap = Object.fromEntries(resourceConfigs.map((config) => [config.route, store[config.property]]));
 
-  app.use(cors());
-  app.use(express.json());
-
-  app.use((req, res, next) => {
-    const started = Date.now();
-    res.on('finish', () => {
-      store.auditLogs.create({
-        tenantId: req.user?.tenantId,
-        method: req.method,
-        path: req.path,
-        statusCode: res.statusCode,
-        durationMs: Date.now() - started,
-      }).catch(() => {});
-    });
-    next();
+  const loggingMiddleware = new LoggingMiddleware(store, {
+    logLevel: process.env.NODE_ENV === 'production' ? 'warn' : 'info',
+    consoleLogging: true,
+    databaseLogging: true,
   });
 
-  app.use((req, res, next) => {
-    if (publicRoute(req)) return next();
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    const user = verifyToken(token);
-    if (!user) return next(new UnauthorizedError());
-    req.user = user;
-    return next();
+  const authMiddleware = new AuthenticationMiddleware({
+    tokenSecret: TOKEN_SECRET,
+    logger: loggingMiddleware,
   });
+
+  app.use(helmet());
+  app.use(cors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    credentials: true,
+  }));
+  app.use(express.json({ limit: '10mb' }));
+
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100,
+    message: { message: 'Too many requests from this IP, please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+  app.use(limiter);
+
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 20,
+    message: { message: 'Too many authentication attempts, please try again later.' },
+  });
+  app.use('/api/auth', authLimiter);
+
+  app.use(loggingMiddleware.handle.bind(loggingMiddleware));
+
+  app.use(authMiddleware.handle.bind(authMiddleware));
 
   app.get('/', (req, res) => res.redirect('/api-docs'));
   app.get('/health', (req, res) => res.json({ status: 'ok', service: 'helpdesk-api' }));
   app.get('/api-docs.json', (req, res) => res.json(buildSwaggerSpec(PORT)));
   app.get('/api-docs', (req, res) => res.type('html').send(swaggerHtml()));
+
+  const signToken = (payload) => authMiddleware.signToken(payload);
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
     const validationError = validateRegisterRequest(req.body);
@@ -353,4 +353,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createApp, createStore, signToken, verifyToken };
+module.exports = { createApp, createStore, LoggingMiddleware, AuthenticationMiddleware };
