@@ -73,6 +73,55 @@ function notFound(res) {
   return res.status(404).json({ message: 'Resource not found' });
 }
 
+function formatLabel(value) {
+  return String(value || 'unassigned').replaceAll('_', ' ');
+}
+
+async function buildLocalAiReply(store, tenantIdValue, prompt) {
+  const [summary, tickets, customers, articles] = await Promise.all([
+    store.dashboardSummary(tenantIdValue),
+    store.tickets.list({ tenantId: tenantIdValue }),
+    store.customers.list({ tenantId: tenantIdValue }),
+    store.articles.list({ tenantId: tenantIdValue }),
+  ]);
+
+  const activeTickets = tickets.filter((ticket) => !['resolved', 'closed'].includes(ticket.status));
+  const highPriorityTickets = activeTickets.filter((ticket) => ticket.priority === 'High');
+  const waitingTickets = activeTickets.filter((ticket) => ticket.status === 'waiting_customer');
+  const triageTickets = activeTickets.filter((ticket) => ticket.status === 'triage');
+  const topTicket = highPriorityTickets[0] || activeTickets[0] || tickets[0];
+
+  const recommendations = [];
+  if (topTicket) {
+    const nextStatus = topTicket.status === 'open' ? 'triage' : topTicket.status === 'triage' ? 'in progress' : formatLabel(topTicket.status);
+    recommendations.push(`Open ticket #${topTicket.id} and move it to ${nextStatus} after adding the first agent note.`);
+  }
+  if (highPriorityTickets.length) recommendations.push('Handle the high-priority item first and make sure one agent clearly owns it.');
+  if (waitingTickets.length) recommendations.push('Follow up on tickets waiting for the customer so they do not sit idle.');
+  if (triageTickets.length) recommendations.push('Review triage tickets and decide whether they need engineering, customer input, or resolution.');
+  if (!articles.length) recommendations.push('Create a knowledge base article if this issue is likely to repeat.');
+  if (!recommendations.length) recommendations.push('The queue looks stable. Keep monitoring new tickets and SLA changes.');
+
+  const lines = [];
+
+  if (!topTicket) {
+    lines.push('There are no tickets in the queue right now.');
+    lines.push('');
+    lines.push('The agent should monitor new requests, review customer records, and keep the knowledge base up to date.');
+    return lines.join('\n');
+  }
+
+  lines.push(`Start with ticket #${topTicket.id}: ${topTicket.title}.`);
+  lines.push('');
+  lines.push(`It is currently ${formatLabel(topTicket.status)} and marked ${topTicket.priority} priority, so it should be handled before lower-priority work.`);
+  lines.push(`Queue context: ${activeTickets.length} active ticket${activeTickets.length === 1 ? '' : 's'}, ${highPriorityTickets.length} high priority, ${waitingTickets.length} waiting on customer.`);
+  lines.push('');
+  lines.push('Next steps:');
+  recommendations.slice(0, 3).forEach((item, index) => lines.push(`${index + 1}. ${item}`));
+
+  return lines.join('\n');
+}
+
 function createApp(store) {
   const app = express();
   const resourceMap = Object.fromEntries(resourceConfigs.map((config) => [config.route, store[config.property]]));
@@ -184,19 +233,27 @@ function createApp(store) {
 
   app.post('/api/ai/chat', asyncRoute(async (req, res) => {
     const prompt = req.body.message || '';
-    let reply = `Demo AI assistant: I would help with "${prompt}". Set OPENAI_API_KEY to call the real OpenAI API.`;
+    let reply = await buildLocalAiReply(store, tenantId(req), prompt);
 
     if (process.env.OPENAI_API_KEY) {
-      const response = await fetch('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({ model: process.env.OPENAI_MODEL || 'gpt-4.1-mini', input: prompt }),
-      });
-      const data = await response.json();
-      reply = data.output_text || data.output?.[0]?.content?.[0]?.text || reply;
+      try {
+        const context = await buildLocalAiReply(store, tenantId(req), prompt);
+        const response = await fetch('https://api.openai.com/v1/responses', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+            input: `You are a concise helpdesk operations assistant. Use this local context and answer the user request.\n\n${context}\n\nUser request: ${prompt}`,
+          }),
+        });
+        const data = await response.json();
+        reply = data.output_text || data.output?.[0]?.content?.[0]?.text || reply;
+      } catch (error) {
+        console.error('OpenAI request failed, using local analysis fallback:', error.message);
+      }
     }
 
     const conversation = await store.aiConversations.create({ tenantId: tenantId(req), prompt, reply });
