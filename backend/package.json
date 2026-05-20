@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
+    "dev:memory": "set USE_MEMORY_STORE=true&& nodemon server.js",
     "start": "node server.js",
+    "start:memory": "set USE_MEMORY_STORE=true&& node server.js",
     "test": "node server.test.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

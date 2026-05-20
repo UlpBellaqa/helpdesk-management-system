@@ -49,13 +49,13 @@ test('login protects ticket list', async () => {
   });
 });
 
-test('role authorization protects admin resources', async () => {
+test('undocumented resource endpoints are not exposed', async () => {
   await withServer(async (baseUrl) => {
-    const agent = await login(baseUrl, 'agent@demo.com', 'agent123');
+    const admin = await login(baseUrl);
     const users = await fetch(`${baseUrl}/api/users`, {
-      headers: { Authorization: `Bearer ${agent.token}` },
+      headers: { Authorization: `Bearer ${admin.token}` },
     });
-    assert.equal(users.status, 403);
+    assert.equal(users.status, 404);
   });
 });
 
@@ -78,9 +78,60 @@ test('ticket comments and status updates create history', async () => {
     });
     assert.equal((await status.json()).status, 'in_progress');
 
-    const histories = await fetch(`${baseUrl}/api/histories?ticketId=1`, { headers });
+    const comments = await fetch(`${baseUrl}/api/tickets/1/comments`, { headers });
+    const commentRows = await comments.json();
+    assert.ok(commentRows.some((row) => row.body === 'Customer confirmed the adapter works.'));
+
+    const histories = await fetch(`${baseUrl}/api/histories`, { headers });
     const historyRows = await histories.json();
+    assert.ok(historyRows.some((row) => row.action === 'commented'));
     assert.ok(historyRows.some((row) => row.action === 'status_changed'));
+  });
+});
+
+test('ticket creation creates or reuses customer by email', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await login(baseUrl);
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${admin.token}` };
+
+    const firstTicket = await fetch(`${baseUrl}/api/tickets`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        title: 'VPN access issue',
+        status: 'open',
+        priority: 'High',
+        customer: {
+          name: 'Arben Krasniqi',
+          email: 'Arben@example.com',
+          company: 'ABC Tech',
+        },
+      }),
+    });
+    const firstTicketBody = await firstTicket.json();
+    assert.equal(firstTicket.status, 201);
+    assert.ok(firstTicketBody.customerId);
+
+    const secondTicket = await fetch(`${baseUrl}/api/tickets`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        title: 'Email access issue',
+        status: 'open',
+        priority: 'Medium',
+        customer: {
+          name: 'Arben Krasniqi',
+          email: 'arben@example.com',
+        },
+      }),
+    });
+    const secondTicketBody = await secondTicket.json();
+    assert.equal(secondTicket.status, 201);
+    assert.equal(secondTicketBody.customerId, firstTicketBody.customerId);
+
+    const customers = await fetch(`${baseUrl}/api/customers`, { headers });
+    const customerRows = await customers.json();
+    assert.equal(customerRows.filter((customer) => customer.email === 'arben@example.com').length, 1);
   });
 });
 

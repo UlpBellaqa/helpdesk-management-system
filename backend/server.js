@@ -16,6 +16,14 @@ const PORT = process.env.PORT || 4000;
 const TOKEN_SECRET = process.env.TOKEN_SECRET || 'dev-secret';
 const TOKEN_EXPIRY = process.env.TOKEN_EXPIRY || '8h';
 const adminResources = new Set(['users', 'roles', 'permissions', 'tenants']);
+const documentedResourceRoutes = {
+  tickets: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
+  customers: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
+  articles: new Set(['getList', 'postList']),
+  services: new Set(['getList', 'postList']),
+  jobs: new Set(['getList']),
+  histories: new Set(['getList']),
+};
 
 async function hashPassword(password) {
   return bcrypt.hash(password || '', 10);
@@ -57,6 +65,50 @@ function safeUser(user) {
 
 function notFound(res) {
   return res.status(404).json({ message: 'Resource not found' });
+}
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+async function resolveTicketCustomer(store, payload, tenantIdValue) {
+  const customerInput = payload.customer || {};
+  const customerId = payload.customerId;
+  const email = normalizeEmail(customerInput.email || payload.customerEmail);
+  const name = String(customerInput.name || payload.customerName || '').trim();
+  const company = String(customerInput.company || payload.customerCompany || '').trim();
+
+  if (customerId) return customerId;
+  if (!email && !name) return undefined;
+
+  if (email) {
+    const existing = (await store.customers.list({ tenantId: tenantIdValue }))
+      .find((customer) => normalizeEmail(customer.email) === email);
+    if (existing) return existing.id;
+  }
+
+  const customer = await store.customers.create({
+    tenantId: tenantIdValue,
+    name: name || email,
+    email,
+    company,
+  });
+  return customer.id;
+}
+
+function sanitizeTicketPayload(payload, customerId) {
+  const {
+    customer,
+    customerName,
+    customerEmail,
+    customerCompany,
+    ...ticketPayload
+  } = payload;
+
+  return {
+    ...ticketPayload,
+    ...(customerId ? { customerId } : {}),
+  };
 }
 
 function formatLabel(value) {
@@ -266,6 +318,12 @@ function createApp(store) {
     return res.status(202).json(job);
   }));
 
+  app.post('/api/tickets', asyncRoute(async (req, res) => {
+    const customerId = await resolveTicketCustomer(store, req.body, tenantId(req));
+    const payload = sanitizeTicketPayload({ ...req.body, tenantId: tenantId(req) }, customerId);
+    return res.status(201).json(await store.tickets.create(payload));
+  }));
+
   app.get('/api/tickets/:id/comments', asyncRoute(async (req, res) => {
     const ticket = await store.tickets.findById(req.params.id, tenantId(req));
     if (!ticket) return notFound(res);
@@ -292,33 +350,36 @@ function createApp(store) {
   }));
 
   Object.entries(resourceMap).forEach(([resource, repo]) => {
-    app.get(`/api/${resource}`, asyncRoute(async (req, res) => {
+    const allowedRoutes = documentedResourceRoutes[resource];
+    if (!allowedRoutes) return;
+
+    if (allowedRoutes.has('getList')) app.get(`/api/${resource}`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const filters = { ...req.query };
       delete filters.q;
       return res.json(await repo.list({ tenantId: tenantId(req), search: req.query.q, filters }));
     }));
 
-    app.post(`/api/${resource}`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('postList')) app.post(`/api/${resource}`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const payload = prepareResourcePayload(req, resource);
       return res.status(201).json(await repo.create(payload));
     }));
 
-    app.get(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('getItem')) app.get(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const row = await repo.findById(req.params.id, tenantId(req));
       return row ? res.json(row) : notFound(res);
     }));
 
-    app.put(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('putItem')) app.put(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const payload = sanitizeUpdatePayload(req, resource);
       const row = await repo.update(req.params.id, payload, tenantId(req));
       return row ? res.json(row) : notFound(res);
     }));
 
-    app.delete(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('deleteItem')) app.delete(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
       if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       return (await repo.delete(req.params.id, tenantId(req))) ? res.status(204).send() : notFound(res);
     }));

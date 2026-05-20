@@ -397,8 +397,12 @@ class PrismaStore extends BaseStore {
   }
 }
 
+function shouldUseMemoryStore(memory) {
+  return memory || ['1', 'true', 'yes'].includes(String(process.env.USE_MEMORY_STORE || '').toLowerCase());
+}
+
 async function createStore({ memory = false } = {}) {
-  if (memory || !process.env.DATABASE_URL) {
+  if (shouldUseMemoryStore(memory) || !process.env.DATABASE_URL) {
     const store = new MemoryStore();
     await store.seed();
     return store;
