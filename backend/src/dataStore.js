@@ -1,3 +1,4 @@
+const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 
 const resourceConfigs = [
@@ -72,190 +73,72 @@ function matches(row, { tenantId, search, filters = {} } = {}) {
   });
 }
 
-class MemoryRepository {
-  constructor({ tenantScoped = true } = {}) {
-    this.tenantScoped = tenantScoped;
-    this.rows = [];
-    this.nextId = 1;
+class PrismaRepository {
+  constructor(prisma, model) {
+    this.prisma = prisma;
+    this.model = model;
   }
 
   async create(data) {
-    const now = new Date().toISOString();
-    const row = {
-      ...data,
-      id: String(this.nextId++),
-      tenantId: this.tenantScoped ? data.tenantId : data.tenantId,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.rows.push(row);
-    return row;
+    const { tenantId, ...createData } = data;
+    return this.prisma[this.model].create({
+      data: {
+        ...createData,
+        ...(tenantId && { tenantId }),
+      },
+    });
   }
 
-  async list(options = {}) {
-    return this.rows.filter((row) => matches(row, options));
-  }
+  async list({ tenantId, search, filters = {} } = {}) {
+    const where = {};
+    if (tenantId) where.tenantId = tenantId;
 
-  async findById(id, tenantId) {
-    return this.rows.find((row) => row.id === String(id) && matches(row, { tenantId })) || null;
-  }
-
-  async update(id, data, tenantId) {
-    const row = await this.findById(id, tenantId);
-    if (!row) return null;
-    const sanitized = { ...data };
-    if (this.tenantScoped) delete sanitized.tenantId;
-    Object.assign(row, sanitized, { updatedAt: new Date().toISOString() });
-    return row;
-  }
-
-  async delete(id, tenantId) {
-    const index = this.rows.findIndex((row) => row.id === String(id) && matches(row, { tenantId }));
-    if (index < 0) return false;
-    this.rows.splice(index, 1);
-    return true;
-  }
-}
-
-function quoteIdentifier(value) {
-  return `"${value.replace(/"/g, '""')}"`;
-}
-
-class PostgresRepository {
-  constructor(pool, config) {
-    this.pool = pool;
-    this.table = config.table;
-    this.config = config;
-    this.tenantScoped = config.tenantScoped !== false;
-    this.explicitFields = new Set((config.fields || []).filter((field) => !specialFields.has(field) && field !== 'tenantId'));
-  }
-
-  rowFromDatabase(row) {
-    const record = {
-      id: String(row.id),
-      tenantId: row.tenant_id || undefined,
-      createdAt: row.created_at.toISOString(),
-      updatedAt: row.updated_at.toISOString(),
-      ...row.data,
-    };
-    for (const field of this.explicitFields) {
-      const column = snakeCase(field);
-      if (Object.prototype.hasOwnProperty.call(row, column)) {
-        record[field] = row[column];
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== '') {
+        where[key] = value;
       }
-    }
-    return record;
-  }
+    });
 
-  async init() {
-    const table = quoteIdentifier(this.table);
-    const columns = [
-      'id BIGSERIAL PRIMARY KEY',
-      'tenant_id TEXT',
-      ...[...this.explicitFields].map((field) => `${quoteIdentifier(snakeCase(field))} ${schemaTypeForField(field)}`),
-      `data JSONB NOT NULL DEFAULT '{}'::jsonb`,
-      `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
-      `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
-    ];
-    await this.pool.query(`CREATE TABLE IF NOT EXISTS ${table} (${columns.join(', ')})`);
-    await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_tenant_idx ON ${table} (tenant_id)`);
-  }
-
-  buildExplicitValues(data) {
-    return buildExplicitValues(data, this.config.fields);
-  }
-
-  async create(data) {
-    const tenantId = this.tenantScoped ? data.tenantId : data.tenantId || null;
-    const rowData = omitSpecialFields(data);
-    const explicitValues = this.buildExplicitValues(rowData);
-    const jsonData = omitExplicitFields(rowData, this.config.fields);
-    const columns = ['tenant_id'];
-    const params = [tenantId || null];
-    const placeholders = ['$1'];
-
-    for (const [field, value] of Object.entries(explicitValues)) {
-      columns.push(quoteIdentifier(snakeCase(field)));
-      params.push(value);
-      placeholders.push(`$${params.length}`);
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { body: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ].filter(condition => Object.values(condition)[0] !== undefined);
     }
 
-    columns.push('data');
-    params.push(jsonData);
-    placeholders.push(`$${params.length}`);
-
-    const result = await this.pool.query(
-      `INSERT INTO ${quoteIdentifier(this.table)} (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`,
-      params,
-    );
-    return this.rowFromDatabase(result.rows[0]);
-  }
-
-  async list(options = {}) {
-    const params = [];
-    const where = [];
-    if (options.tenantId && this.tenantScoped) {
-      params.push(options.tenantId);
-      where.push(`tenant_id = $${params.length}`);
-    }
-    const sql = `SELECT * FROM ${quoteIdentifier(this.table)} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id`;
-    const result = await this.pool.query(sql, params);
-    return result.rows.map((row) => this.rowFromDatabase(row)).filter((row) => matches(row, options));
+    return this.prisma[this.model].findMany({ where });
   }
 
   async findById(id, tenantId) {
-    const params = [id];
-    const where = ['id = $1'];
-    if (tenantId && this.tenantScoped) {
-      params.push(tenantId);
-      where.push(`tenant_id = $${params.length}`);
-    }
-    const result = await this.pool.query(`SELECT * FROM ${quoteIdentifier(this.table)} WHERE ${where.join(' AND ')}`, params);
-    return result.rows[0] ? this.rowFromDatabase(result.rows[0]) : null;
+    const where = { id };
+    if (tenantId) where.tenantId = tenantId;
+    
+    return this.prisma[this.model].findFirst({ where });
   }
 
   async update(id, data, tenantId) {
-    const current = await this.findById(id, tenantId);
-    if (!current) return null;
-    const next = { ...omitSpecialFields(current), ...omitSpecialFields(data) };
-    const nextTenantId = this.tenantScoped ? current.tenantId : data.tenantId || null;
-    const explicitValues = this.buildExplicitValues(next);
-    const jsonData = omitExplicitFields(next, this.config.fields);
+    const { tenantId: _, ...updateData } = data;
+    
+    const existing = await this.findById(id, tenantId);
+    if (!existing) return null;
 
-    const sets = ['tenant_id = $1', 'data = $2', 'updated_at = now()'];
-    const params = [nextTenantId || null, jsonData];
-
-    for (const [field, value] of Object.entries(explicitValues)) {
-      sets.push(`${quoteIdentifier(snakeCase(field))} = $${params.length + 1}`);
-      params.push(value);
-    }
-
-    params.push(id);
-    const where = ['id = $' + params.length];
-    if (tenantId && this.tenantScoped) {
-      params.push(tenantId);
-      where.push(`tenant_id = $${params.length}`);
-    }
-
-    const result = await this.pool.query(
-      `UPDATE ${quoteIdentifier(this.table)}
-       SET ${sets.join(', ')}
-       WHERE ${where.join(' AND ')}
-       RETURNING *`,
-      params,
-    );
-    return result.rows[0] ? this.rowFromDatabase(result.rows[0]) : null;
+    return this.prisma[this.model].update({
+      where: { id },
+      data: updateData,
+    });
   }
 
   async delete(id, tenantId) {
-    const params = [id];
-    const where = ['id = $1'];
-    if (tenantId && this.tenantScoped) {
-      params.push(tenantId);
-      where.push(`tenant_id = $${params.length}`);
-    }
-    const result = await this.pool.query(`DELETE FROM ${quoteIdentifier(this.table)} WHERE ${where.join(' AND ')}`, params);
-    return result.rowCount > 0;
+    const existing = await this.findById(id, tenantId);
+    if (!existing) return false;
+
+    await this.prisma[this.model].delete({
+      where: { id },
+    });
+    return true;
   }
 }
 
@@ -410,6 +293,51 @@ class BaseStore {
   async close() {}
 }
 
+class MemoryRepository {
+  constructor({ tenantScoped = true } = {}) {
+    this.tenantScoped = tenantScoped;
+    this.rows = [];
+    this.nextId = 1;
+  }
+
+  async create(data) {
+    const now = new Date().toISOString();
+    const row = {
+      ...data,
+      id: String(this.nextId++),
+      tenantId: this.tenantScoped ? data.tenantId : data.tenantId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.rows.push(row);
+    return row;
+  }
+
+  async list(options = {}) {
+    return this.rows.filter((row) => matches(row, options));
+  }
+
+  async findById(id, tenantId) {
+    return this.rows.find((row) => row.id === String(id) && matches(row, { tenantId })) || null;
+  }
+
+  async update(id, data, tenantId) {
+    const row = await this.findById(id, tenantId);
+    if (!row) return null;
+    const sanitized = { ...data };
+    if (this.tenantScoped) delete sanitized.tenantId;
+    Object.assign(row, sanitized, { updatedAt: new Date().toISOString() });
+    return row;
+  }
+
+  async delete(id, tenantId) {
+    const index = this.rows.findIndex((row) => row.id === String(id) && matches(row, { tenantId }));
+    if (index < 0) return false;
+    this.rows.splice(index, 1);
+    return true;
+  }
+}
+
 class MemoryStore extends BaseStore {
   constructor() {
     super();
@@ -421,28 +349,51 @@ class MemoryStore extends BaseStore {
   }
 }
 
-class PostgresStore extends BaseStore {
-  constructor(databaseUrl, redisUrl) {
+class PrismaStore extends BaseStore {
+  constructor(databaseUrl) {
     super();
-    const { Pool } = require('pg');
-    this.pool = new Pool({ connectionString: databaseUrl });
-    resourceConfigs.forEach((config) => {
-      this[config.property] = new PostgresRepository(this.pool, config);
+    this.prisma = new PrismaClient({
+      datasources: {
+        db: {
+          url: databaseUrl,
+        },
+      },
     });
-    this.cache = redisUrl ? new RedisCache(redisUrl) : new MemoryCache();
+
+    this.tenants = new PrismaRepository(this.prisma, 'tenant');
+    this.users = new PrismaRepository(this.prisma, 'user');
+    this.roles = new PrismaRepository(this.prisma, 'role');
+    this.permissions = new PrismaRepository(this.prisma, 'permission');
+    this.departments = new PrismaRepository(this.prisma, 'department');
+    this.teams = new PrismaRepository(this.prisma, 'team');
+    this.agentProfiles = new PrismaRepository(this.prisma, 'agentProfile');
+    this.customers = new PrismaRepository(this.prisma, 'customer');
+    this.services = new PrismaRepository(this.prisma, 'service');
+    this.slaPolicies = new PrismaRepository(this.prisma, 'slaPolicy');
+    this.priorities = new PrismaRepository(this.prisma, 'priority');
+    this.categories = new PrismaRepository(this.prisma, 'category');
+    this.tickets = new PrismaRepository(this.prisma, 'ticket');
+    this.comments = new PrismaRepository(this.prisma, 'ticketComment');
+    this.attachments = new PrismaRepository(this.prisma, 'ticketAttachment');
+    this.histories = new PrismaRepository(this.prisma, 'ticketHistory');
+    this.articles = new PrismaRepository(this.prisma, 'knowledgeArticle');
+    this.notifications = new PrismaRepository(this.prisma, 'notification');
+    this.auditLogs = new PrismaRepository(this.prisma, 'auditLog');
+    this.aiConversations = new PrismaRepository(this.prisma, 'aiConversation');
+    this.cacheEntries = new PrismaRepository(this.prisma, 'cacheEntry');
+    this.jobs = new PrismaRepository(this.prisma, 'backgroundJob');
+
+    this.cache = new MemoryCache();
     this.queue = new BackgroundQueue(this.jobs);
   }
 
   async init() {
-    for (const config of resourceConfigs) {
-      await this[config.property].init();
-    }
     await this.seed();
   }
 
   async close() {
     await this.cache.close?.();
-    await this.pool.end();
+    await this.prisma.$disconnect();
   }
 }
 
@@ -452,7 +403,8 @@ async function createStore({ memory = false } = {}) {
     await store.seed();
     return store;
   }
-  const store = new PostgresStore(process.env.DATABASE_URL, process.env.REDIS_URL || 'redis://localhost:6379');
+
+  const store = new PrismaStore(process.env.DATABASE_URL);
   await store.init();
   return store;
 }
