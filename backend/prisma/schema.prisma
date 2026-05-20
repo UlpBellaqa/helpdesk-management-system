@@ -1,0 +1,370 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String?
+  slug      String?   @unique
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  users     User[]
+
+  @@map("tenants")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String    @map("tenant_id")
+  name      String?
+  email     String    @unique
+  password  String?
+  role      String?   @default("customer")
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  tenant      Tenant          @relation(fields: [tenantId], references: [id])
+  comments    TicketComment[]
+  ticketHistories TicketHistory[]
+  agentProfile AgentProfile?
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+model Role {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  name      String?
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  permissions Permission[]
+
+  @@index([tenantId])
+  @@map("roles")
+}
+
+model Permission {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  roleId    String?   @map("role_id")
+  name      String?
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  role Role? @relation(fields: [roleId], references: [id])
+
+  @@index([tenantId])
+  @@index([roleId])
+  @@map("permissions")
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  name      String?
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  teams     Team[]
+  services  Service[]
+
+  @@index([tenantId])
+  @@map("departments")
+}
+
+model Team {
+  id           String   @id @default(cuid())
+  tenantId     String?   @map("tenant_id")
+  departmentId String?   @map("department_id")
+  name         String?
+  data         Json      @default("{}")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  department   Department?  @relation(fields: [departmentId], references: [id])
+  agentProfiles AgentProfile[]
+
+  @@index([tenantId])
+  @@map("teams")
+}
+
+model AgentProfile {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  userId    String?   @unique @map("user_id")
+  teamId    String?   @map("team_id")
+  title     String?
+  active    Boolean   @default(false)
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  user  User?  @relation(fields: [userId], references: [id])
+  team  Team?  @relation(fields: [teamId], references: [id])
+
+  @@index([tenantId])
+  @@index([teamId])
+  @@map("agent_profiles")
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  name      String?
+  email     String?
+  company   String?
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  tickets   Ticket[]
+
+  @@index([tenantId])
+  @@map("customers")
+}
+
+model Service {
+  id           String   @id @default(cuid())
+  tenantId     String?   @map("tenant_id")
+  departmentId String?   @map("department_id")
+  name         String?
+  data         Json      @default("{}")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  department Department? @relation(fields: [departmentId], references: [id])
+  tickets    Ticket[]
+
+  @@index([tenantId])
+  @@map("services")
+}
+
+model SlaPolicy {
+  id              String   @id @default(cuid())
+  tenantId        String?   @map("tenant_id")
+  name            String?
+  priority        String?
+  responseHours   Int?      @map("response_hours")
+  resolutionHours Int?      @map("resolution_hours")
+  data            Json      @default("{}")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("sla_policies")
+}
+
+model Priority {
+  id            String   @id @default(cuid())
+  tenantId      String?   @map("tenant_id")
+  name          String?
+  rank          Int?
+  responseHours Int?      @map("response_hours")
+  data          Json      @default("{}")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("priorities")
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  name      String?
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("categories")
+}
+
+model Ticket {
+  id          String    @id @default(cuid())
+  tenantId    String?   @map("tenant_id")
+  customerId  String?   @map("customer_id")
+  assigneeId  String?   @map("assignee_id")
+  serviceId   String?   @map("service_id")
+  title       String?
+  description String?
+  status      String?   @default("open")
+  priority    String?   @default("Medium")
+  category    String?
+  closedAt    DateTime? @map("closed_at")
+  data        Json      @default("{}")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  customer    Customer?       @relation(fields: [customerId], references: [id])
+  service     Service?        @relation(fields: [serviceId], references: [id])
+  comments    TicketComment[]
+  histories   TicketHistory[]
+  attachments TicketAttachment[]
+
+  @@index([tenantId])
+  @@map("tickets")
+}
+
+model TicketComment {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  ticketId  String    @map("ticket_id")
+  authorId  String    @map("author_id")
+  body      String?
+  internal  Boolean   @default(false)
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+  author User   @relation(fields: [authorId], references: [id])
+
+  @@index([tenantId])
+  @@index([ticketId])
+  @@index([authorId])
+  @@map("ticket_comments")
+}
+
+model TicketAttachment {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  ticketId  String    @map("ticket_id")
+  fileName  String?   @map("file_name")
+  url       String?
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+
+  @@index([tenantId])
+  @@index([ticketId])
+  @@map("ticket_attachments")
+}
+
+model TicketHistory {
+  id         String   @id @default(cuid())
+  tenantId   String?   @map("tenant_id")
+  ticketId   String    @map("ticket_id")
+  action     String?
+  fromStatus String?   @map("from_status")
+  toStatus   String?   @map("to_status")
+  actorId    String    @map("actor_id")
+  commentId  String?   @map("comment_id")
+  data       Json      @default("{}")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+  actor  User   @relation(fields: [actorId], references: [id])
+
+  @@index([tenantId])
+  @@index([ticketId])
+  @@index([actorId])
+  @@map("ticket_histories")
+}
+
+model KnowledgeArticle {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  title     String?
+  body      String?
+  category  String?
+  published Boolean   @default(false)
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("knowledge_articles")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  type      String?
+  payload   Json?
+  status    String?
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String?   @map("tenant_id")
+  method     String?
+  path       String?
+  statusCode Int?      @map("status_code")
+  durationMs Int?      @map("duration_ms")
+  data       Json      @default("{}")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("audit_logs")
+}
+
+model AiConversation {
+  id        String   @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  prompt    String?
+  reply     String?
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("ai_conversations")
+}
+
+model CacheEntry {
+  id        String    @id @default(cuid())
+  tenantId  String?   @map("tenant_id")
+  key       String?
+  value     Json?
+  expiresAt DateTime? @map("expires_at")
+  data      Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([key])
+  @@map("cache_entries")
+}
+
+model BackgroundJob {
+  id         String    @id @default(cuid())
+  tenantId   String?   @map("tenant_id")
+  type       String?
+  payload    Json?
+  status     String?
+  result     String?
+  finishedAt DateTime? @map("finished_at")
+  data       Json      @default("{}")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("background_jobs")
+}
