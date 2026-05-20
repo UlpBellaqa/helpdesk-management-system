@@ -16,6 +16,9 @@ jobs:
       - name: Backend install
         run: npm ci
         working-directory: backend
+      - name: Generate Prisma Client
+        run: npx prisma generate
+        working-directory: backend
       - name: Backend tests
         run: npm test
         working-directory: backend
