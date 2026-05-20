@@ -1,23 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
+'use client'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 import { API_BASE_URL, apiRequest } from './api.js'
 import { useAuth } from './state/useAuth.js'
 
 const statuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed']
-const navItems = ['Overview', 'Tickets', 'Customers', 'Services', 'Knowledge', 'Activity', 'Automation', 'Admin']
-const viewDescriptions = {
-  Overview: 'Operational summary, workload signals and quick access to key workflows.',
-  Tickets: 'Review the support queue, update status and keep ticket communication moving.',
-  Customers: 'Maintain customer records connected to helpdesk activity.',
-  Services: 'Manage the service catalog and SLA expectations.',
-  Knowledge: 'Create reusable support articles for faster resolution.',
-  Activity: 'Track ticket history and background jobs.',
-  Automation: 'Use global search, Redis cache and the AI assistant endpoint.',
-  Admin: 'Review users and API coverage for the system.',
-}
+const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'Services', 'Automation', 'Activity', 'Settings', 'Admin']
 
 function formatLabel(value) {
   return String(value || 'unassigned').replaceAll('_', ' ')
+}
+
+function initials(name = 'HD') {
+  return name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
 }
 
 function EmptyState({ title, text }) {
@@ -29,11 +25,40 @@ function EmptyState({ title, text }) {
   )
 }
 
+function readStoredJson(key, fallback) {
+  if (typeof window === 'undefined') return fallback
+  const saved = localStorage.getItem(key)
+  return saved ? JSON.parse(saved) : fallback
+}
+
+function readStoredTheme() {
+  if (typeof window === 'undefined') return false
+  return localStorage.getItem('helpdesk-theme') === 'dark'
+}
+
+function SearchResultSummary({ result }) {
+  if (!result) return null
+  return (
+    <div className="result-summary">
+      <div>
+        <strong>{result.results.length}</strong>
+        <span>{result.results.length === 1 ? 'result' : 'results'}</span>
+      </div>
+      <p>{result.cached ? 'Returned from Redis cache.' : 'Returned from API search.'}</p>
+    </div>
+  )
+}
+
 function App() {
   const { token, user, login, logout } = useAuth()
   const [activeView, setActiveView] = useState('Overview')
-  const [email, setEmail] = useState('admin@demo.com')
-  const [password, setPassword] = useState('admin123')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [darkMode, setDarkMode] = useState(readStoredTheme)
+  const [settingsTab, setSettingsTab] = useState('Profile')
+  const [profileSettings, setProfileSettings] = useState(() => readStoredJson('helpdesk-profile-settings', { name: '', email: '', role: '', department: 'Support Operations' }))
+  const [preferenceSettings, setPreferenceSettings] = useState(() => readStoredJson('helpdesk-preference-settings', { defaultPriority: 'Medium', defaultCategory: 'Software', startPage: 'Overview', compactMode: false }))
+  const [notificationSettings, setNotificationSettings] = useState(() => readStoredJson('helpdesk-notification-settings', { emailAlerts: true, highPriorityAlerts: true, dailySummary: false }))
   const [dashboard, setDashboard] = useState(null)
   const [tickets, setTickets] = useState([])
   const [customers, setCustomers] = useState([])
@@ -46,9 +71,9 @@ function App() {
   const [selectedTicket, setSelectedTicket] = useState(null)
   const [comments, setComments] = useState([])
   const [ticketSearch, setTicketSearch] = useState('')
-  const [globalSearch, setGlobalSearch] = useState('laptop')
+  const [globalSearch, setGlobalSearch] = useState('')
   const [searchResult, setSearchResult] = useState(null)
-  const [aiMessage, setAiMessage] = useState('Summarize open ticket risks')
+  const [aiMessage, setAiMessage] = useState('')
   const [aiReply, setAiReply] = useState('')
   const [error, setError] = useState('')
   const [newTicket, setNewTicket] = useState({ title: '', description: '', priority: 'Medium', category: 'Software' })
@@ -64,44 +89,56 @@ function App() {
     return navItems
   }, [user])
 
+  const openTickets = tickets.filter((ticket) => !['resolved', 'closed'].includes(ticket.status))
+  const highPriorityTickets = tickets.filter((ticket) => ticket.priority === 'High')
+  const selectedCustomer = customers.find((customer) => customer.id === selectedTicket?.customerId)
   const statusEntries = Object.entries(dashboard?.byStatus || {})
-  const priorityEntries = Object.entries(dashboard?.byPriority || {})
-  const openTicketCount = tickets.filter((ticket) => !['resolved', 'closed'].includes(ticket.status)).length
-  const highPriorityCount = tickets.filter((ticket) => ticket.priority === 'High').length
-  const resolvedTicketCount = tickets.filter((ticket) => ['resolved', 'closed'].includes(ticket.status)).length
 
-  async function loadDashboard() {
-    setDashboard(await apiRequest('/api/dashboard/summary', { token }))
+  useEffect(() => {
+    localStorage.setItem('helpdesk-theme', darkMode ? 'dark' : 'light')
+  }, [darkMode])
+
+  useEffect(() => {
+    localStorage.setItem('helpdesk-profile-settings', JSON.stringify(profileSettings))
+  }, [profileSettings])
+
+  useEffect(() => {
+    localStorage.setItem('helpdesk-preference-settings', JSON.stringify(preferenceSettings))
+  }, [preferenceSettings])
+
+  useEffect(() => {
+    localStorage.setItem('helpdesk-notification-settings', JSON.stringify(notificationSettings))
+  }, [notificationSettings])
+
+  async function reloadTickets() {
+    const rows = await apiRequest(`/api/tickets?q=${encodeURIComponent(ticketSearch)}`, { token })
+    setTickets(rows)
+    setSelectedTicket((current) => rows.find((ticket) => ticket.id === current?.id) || rows[0] || null)
   }
 
-  async function loadCustomers() {
-    setCustomers(await apiRequest('/api/customers', { token }))
-  }
-
-  async function loadArticles() {
-    setArticles(await apiRequest('/api/articles', { token }))
-  }
-
-  async function loadOperations() {
-    const [serviceRows, slaRows, jobRows, historyRows] = await Promise.all([
+  const loadWorkspace = useCallback(async () => {
+    const [summary, customerRows, articleRows, serviceRows, slaRows, jobRows, historyRows, userRows] = await Promise.all([
+      apiRequest('/api/dashboard/summary', { token }),
+      apiRequest('/api/customers', { token }),
+      apiRequest('/api/articles', { token }),
       apiRequest('/api/services', { token }),
       apiRequest('/api/sla-policies', { token }),
       apiRequest('/api/jobs', { token }),
       apiRequest('/api/histories', { token }),
+      user?.role === 'admin' ? apiRequest('/api/users', { token }) : Promise.resolve([]),
     ])
+    setDashboard(summary)
+    setCustomers(customerRows)
+    setArticles(articleRows)
     setServices(serviceRows)
     setSlaPolicies(slaRows)
     setJobs(jobRows)
-    setHistories(historyRows.slice(-8).reverse())
-  }
-
-  async function loadUsers() {
-    if (user?.role !== 'admin') return
-    setUsers(await apiRequest('/api/users', { token }))
-  }
+    setHistories(historyRows.slice(-10).reverse())
+    setUsers(userRows)
+  }, [token, user?.role])
 
   async function refreshWorkspace() {
-    await Promise.all([loadDashboard(), loadCustomers(), loadArticles(), loadOperations(), loadUsers(), reloadTickets()])
+    await Promise.all([loadWorkspace(), reloadTickets()])
   }
 
   useEffect(() => {
@@ -129,37 +166,19 @@ function App() {
     if (!token) return
     let active = true
 
-    async function loadWorkspace() {
+    async function load() {
       try {
-        const [summary, customerRows, articleRows, serviceRows, slaRows, jobRows, historyRows, userRows] = await Promise.all([
-          apiRequest('/api/dashboard/summary', { token }),
-          apiRequest('/api/customers', { token }),
-          apiRequest('/api/articles', { token }),
-          apiRequest('/api/services', { token }),
-          apiRequest('/api/sla-policies', { token }),
-          apiRequest('/api/jobs', { token }),
-          apiRequest('/api/histories', { token }),
-          user?.role === 'admin' ? apiRequest('/api/users', { token }) : Promise.resolve([]),
-        ])
-        if (!active) return
-        setDashboard(summary)
-        setCustomers(customerRows)
-        setArticles(articleRows)
-        setServices(serviceRows)
-        setSlaPolicies(slaRows)
-        setJobs(jobRows)
-        setHistories(historyRows.slice(-8).reverse())
-        setUsers(userRows)
+        await loadWorkspace()
       } catch (requestError) {
         if (active) setError(requestError.message)
       }
     }
 
-    loadWorkspace()
+    load()
     return () => {
       active = false
     }
-  }, [token, user?.role])
+  }, [loadWorkspace, token])
 
   useEffect(() => {
     if (!token || !selectedTicket) return
@@ -179,12 +198,6 @@ function App() {
       active = false
     }
   }, [selectedTicket, token])
-
-  async function reloadTickets() {
-    const rows = await apiRequest(`/api/tickets?q=${encodeURIComponent(ticketSearch)}`, { token })
-    setTickets(rows)
-    setSelectedTicket((current) => rows.find((ticket) => ticket.id === current?.id) || rows[0] || null)
-  }
 
   async function submitLogin(event) {
     event.preventDefault()
@@ -206,6 +219,7 @@ function App() {
   }
 
   async function updateStatus(status) {
+    if (!selectedTicket) return
     const ticket = await apiRequest(`/api/tickets/${selectedTicket.id}/status`, { token, method: 'PATCH', body: { status } })
     setSelectedTicket(ticket)
     await refreshWorkspace()
@@ -218,18 +232,26 @@ function App() {
     const comment = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token, method: 'POST', body: { body } })
     event.currentTarget.reset()
     setComments((rows) => [...rows, comment])
-    await loadDashboard()
   }
 
-  async function searchAll(event) {
-    event.preventDefault()
-    setSearchResult(await apiRequest(`/api/search?q=${encodeURIComponent(globalSearch)}`, { token }))
+  async function deleteTicket(ticketId) {
+    if (!window.confirm('Delete this ticket? This action cannot be undone.')) return
+    await apiRequest(`/api/tickets/${ticketId}`, { token, method: 'DELETE' })
+    setSelectedTicket(null)
+    setComments([])
+    await refreshWorkspace()
   }
 
-  async function askAi() {
-    const data = await apiRequest('/api/ai/chat', { token, method: 'POST', body: { message: aiMessage } })
-    setAiReply(data.reply)
-    await loadDashboard()
+  async function deleteComment(commentId) {
+    if (!window.confirm('Delete this comment?')) return
+    await apiRequest(`/api/comments/${commentId}`, { token, method: 'DELETE' })
+    setComments((rows) => rows.filter((comment) => comment.id !== commentId))
+  }
+
+  async function deleteResource(resource, id, refresh = loadWorkspace) {
+    if (!window.confirm(`Delete this ${resource.replace('-', ' ')}?`)) return
+    await apiRequest(`/api/${resource}/${id}`, { token, method: 'DELETE' })
+    await refresh()
   }
 
   async function createCustomer(event) {
@@ -237,7 +259,7 @@ function App() {
     if (!newCustomer.name.trim() || !newCustomer.email.trim()) return
     await apiRequest('/api/customers', { token, method: 'POST', body: newCustomer })
     setNewCustomer({ name: '', email: '', company: '' })
-    await Promise.all([loadCustomers(), loadDashboard()])
+    await loadWorkspace()
   }
 
   async function createArticle(event) {
@@ -245,7 +267,7 @@ function App() {
     if (!newArticle.title.trim() || !newArticle.body.trim()) return
     await apiRequest('/api/articles', { token, method: 'POST', body: newArticle })
     setNewArticle({ title: '', body: '', category: 'General', published: true })
-    await Promise.all([loadArticles(), loadDashboard()])
+    await loadWorkspace()
   }
 
   async function createService(event) {
@@ -253,7 +275,7 @@ function App() {
     if (!newService.name.trim()) return
     await apiRequest('/api/services', { token, method: 'POST', body: newService })
     setNewService({ name: '', departmentId: '' })
-    await loadOperations()
+    await loadWorkspace()
   }
 
   async function createSla(event) {
@@ -261,7 +283,7 @@ function App() {
     if (!newSla.name.trim()) return
     await apiRequest('/api/sla-policies', { token, method: 'POST', body: newSla })
     setNewSla({ name: '', priority: 'High', responseHours: 4, resolutionHours: 24 })
-    await loadOperations()
+    await loadWorkspace()
   }
 
   async function enqueueJob(event) {
@@ -274,21 +296,29 @@ function App() {
       return
     }
     await apiRequest('/api/jobs', { token, method: 'POST', body: { type: newJob.type, payload } })
-    await Promise.all([loadOperations(), loadDashboard()])
+    await loadWorkspace()
+  }
+
+  async function searchAll(event) {
+    event.preventDefault()
+    if (!globalSearch.trim()) return
+    setSearchResult(await apiRequest(`/api/search?q=${encodeURIComponent(globalSearch)}`, { token }))
+  }
+
+  async function askAi() {
+    if (!aiMessage.trim()) return
+    const data = await apiRequest('/api/ai/chat', { token, method: 'POST', body: { message: aiMessage } })
+    setAiReply(data.reply)
   }
 
   if (!token) {
     return (
-      <main className="login-page">
-        <form className="panel login-panel" onSubmit={submitLogin}>
-          <div>
-            <span className="eyebrow">Support operations</span>
-            <h1>Helpdesk Management</h1>
-            <p className="muted">Manage tickets, customers, articles and automation from one workspace.</p>
-          </div>
-          <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-          <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-          <button type="submit">Login</button>
+      <main className={`login-page ${darkMode ? 'theme-dark' : ''}`}>
+        <form className="login-card" onSubmit={submitLogin}>
+          <div className="login-brand"><span>HD</span><div><h1>Helpdesk</h1><p>Sign in to continue.</p></div></div>
+          <label>Email<input placeholder="you@company.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+          <label>Password<input placeholder="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+          <div className="actions"><button type="submit">Sign in</button><button className="secondary-button" type="button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? 'Light' : 'Dark'}</button></div>
           {error && <p className="error">{error}</p>}
         </form>
       </main>
@@ -296,491 +326,165 @@ function App() {
   }
 
   return (
-    <main className="app">
-      <header className="topbar">
-        <div>
-          <span className="eyebrow">Tenant workspace</span>
-          <h1>Helpdesk Management</h1>
-          <p className="muted">{user.name} / {user.role}</p>
-        </div>
-        <nav>
-          <span className="system-pill">API {API_BASE_URL.replace('http://', '')}</span>
-          <a href={`${API_BASE_URL}/api-docs`} target="_blank" rel="noreferrer">Swagger</a>
-          <button onClick={logout}>Logout</button>
+    <main className={`app ${darkMode ? 'theme-dark' : ''}`}>
+      <aside className="sidebar">
+        <div className="brand"><span>HD</span><strong>Helpdesk</strong></div>
+        <nav className="main-nav">
+          {visibleNavItems.map((item) => <button key={item} className={activeView === item ? 'active' : ''} onClick={() => setActiveView(item)}>{item}</button>)}
         </nav>
-      </header>
+        <button className="sidebar-user" onClick={() => { setActiveView('Settings'); setSettingsTab('Profile') }}>
+          <strong>{user.name}</strong>
+        </button>
+      </aside>
 
-      {error && <p className="error">{error}</p>}
+      <section className="workspace">
+        <header className="topbar">
+          <div><h1>{activeView}</h1><p>{openTickets.length} open tickets / {highPriorityTickets.length} high priority</p></div>
+          <div className="actions"><button className="secondary-button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? 'Light' : 'Dark'}</button><button onClick={logout}>Logout</button></div>
+        </header>
 
-      <section className="shell">
-        <aside className="sidebar">
-          <div className="brand-mark">
-            <strong>HD</strong>
-            <span>Support Console</span>
-          </div>
-          <div className="profile-card">
-            <strong>{user.name}</strong>
-            <span>{user.email}</span>
-            <span className="role-badge">{user.role}</span>
-          </div>
-          <div className="nav-list">
-            {visibleNavItems.map((item) => (
-              <button key={item} className={activeView === item ? 'active' : ''} onClick={() => setActiveView(item)}>
-                {item}
-              </button>
-            ))}
-          </div>
-        </aside>
+        {error && <p className="error">{error}</p>}
 
-        <div className="workspace">
-          <section className="workspace-head">
-            <div>
-              <span className="eyebrow">{activeView}</span>
-              <h2>{activeView === 'Overview' ? 'Operations dashboard' : activeView}</h2>
-              <p className="muted">{viewDescriptions[activeView]}</p>
+        {activeView === 'Overview' && (
+          <>
+            <section className="metric-grid">
+              <div className="card metric"><span>Open</span><strong>{openTickets.length}</strong></div>
+              <div className="card metric"><span>Customers</span><strong>{customers.length}</strong></div>
+              <div className="card metric"><span>Articles</span><strong>{articles.length}</strong></div>
+              <div className="card metric"><span>Jobs</span><strong>{jobs.length}</strong></div>
+            </section>
+            <section className="grid-two">
+              <div className="card"><div className="card-head"><h2>Ticket status</h2></div><div className="status-list">{statusEntries.map(([status, count]) => <div key={status}><span>{formatLabel(status)}</span><strong>{count}</strong></div>)} {!statusEntries.length && <EmptyState title="No queue activity" text="Ticket status data will appear here when work begins." />}</div></div>
+              <div className="card"><div className="card-head"><h2>Recent tickets</h2></div><div className="stack-list">{(dashboard?.recentTickets || tickets.slice(0, 5)).map((ticket) => <button key={ticket.id} onClick={() => { setSelectedTicket(ticket); setActiveView('Tickets') }}><strong>{ticket.title}</strong><span>{formatLabel(ticket.status)} / {ticket.priority}</span></button>)}</div></div>
+            </section>
+          </>
+        )}
+
+        {activeView === 'Tickets' && (
+          <section className="tickets-layout">
+            <div className="card list-card">
+              <div className="card-head"><h2>Queue</h2><span>{tickets.length}</span></div>
+              <input placeholder="Search tickets" value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} />
+              <div className="ticket-list">{tickets.map((ticket) => <button key={ticket.id} className={ticket.id === selectedTicket?.id ? 'selected' : ''} onClick={() => setSelectedTicket(ticket)}><strong>{ticket.title}</strong><span>{ticket.priority} / {formatLabel(ticket.status)}</span></button>)} {!tickets.length && <EmptyState title="Queue is empty" text="New support requests will appear here." />}</div>
             </div>
-            <div className="quick-actions">
-              <button onClick={() => setActiveView('Tickets')}>New ticket</button>
-              <button onClick={() => setActiveView('Customers')}>Customer</button>
-              <button onClick={() => setActiveView('Knowledge')}>Article</button>
+
+            <div className="card detail-card">
+              {selectedTicket ? (
+                <>
+                  <div className="detail-head"><div><span>Ticket #{selectedTicket.id}</span><h2>{selectedTicket.title}</h2></div><div className="detail-actions"><strong>{formatLabel(selectedTicket.status)}</strong><button className="danger-button" onClick={() => deleteTicket(selectedTicket.id)}>Delete</button></div></div>
+                  <p className="description">{selectedTicket.description || 'No description provided.'}</p>
+                  <div className="meta-grid"><div><span>Priority</span><strong>{selectedTicket.priority}</strong></div><div><span>Category</span><strong>{selectedTicket.category || 'General'}</strong></div><div><span>Customer</span><strong>{selectedCustomer?.name || 'Unassigned'}</strong></div></div>
+                  <div className="status-row">{statuses.map((status) => <button key={status} className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>{formatLabel(status)}</button>)}</div>
+                  <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className="comment-row"><p>{comment.body}</p><button className="danger-button ghost-danger" onClick={() => deleteComment(comment.id)}>Delete</button></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
+                  <form className="inline-form" onSubmit={addComment}><input name="comment" placeholder="Add comment..." /><button type="submit">Add</button></form>
+                </>
+              ) : <EmptyState title="Select a ticket" text="Details will appear here." />}
+            </div>
+
+            <form className="card side-card" onSubmit={createTicket}>
+              <h2>New ticket</h2>
+              <input placeholder="Title" value={newTicket.title} onChange={(event) => setNewTicket({ ...newTicket, title: event.target.value })} />
+              <textarea placeholder="Description" value={newTicket.description} onChange={(event) => setNewTicket({ ...newTicket, description: event.target.value })} />
+              <select value={newTicket.priority} onChange={(event) => setNewTicket({ ...newTicket, priority: event.target.value })}><option>High</option><option>Medium</option><option>Low</option></select>
+              <input placeholder="Category" value={newTicket.category} onChange={(event) => setNewTicket({ ...newTicket, category: event.target.value })} />
+              <button type="submit">Create ticket</button>
+            </form>
+          </section>
+        )}
+
+        {activeView === 'Customers' && (
+          <section className="grid-main-side">
+            <div className="card"><div className="card-head"><h2>Customers</h2><span>{customers.length}</span></div><div className="table-list">{customers.map((customer) => <div key={customer.id} className="table-row with-action"><strong>{customer.name}</strong><span>{customer.email}</span><span>{customer.company || 'No company'}</span><button className="danger-button ghost-danger" onClick={() => deleteResource('customers', customer.id)}>Delete</button></div>)}</div></div>
+            <form className="card side-card" onSubmit={createCustomer}><h2>Add customer</h2><input placeholder="Name" value={newCustomer.name} onChange={(event) => setNewCustomer({ ...newCustomer, name: event.target.value })} /><input placeholder="Email" value={newCustomer.email} onChange={(event) => setNewCustomer({ ...newCustomer, email: event.target.value })} /><input placeholder="Company" value={newCustomer.company} onChange={(event) => setNewCustomer({ ...newCustomer, company: event.target.value })} /><button type="submit">Create</button></form>
+          </section>
+        )}
+
+        {activeView === 'Knowledge' && (
+          <section className="grid-main-side">
+            <div className="card"><div className="card-head"><h2>Knowledge base</h2><span>{articles.length}</span></div><div className="article-list">{articles.map((article) => <article key={article.id}><div className="article-head"><span>{article.category}</span><button className="danger-button ghost-danger" onClick={() => deleteResource('articles', article.id)}>Delete</button></div><h3>{article.title}</h3><p>{article.body}</p></article>)}</div></div>
+            <form className="card side-card" onSubmit={createArticle}><h2>New article</h2><input placeholder="Title" value={newArticle.title} onChange={(event) => setNewArticle({ ...newArticle, title: event.target.value })} /><input placeholder="Category" value={newArticle.category} onChange={(event) => setNewArticle({ ...newArticle, category: event.target.value })} /><textarea placeholder="Body" value={newArticle.body} onChange={(event) => setNewArticle({ ...newArticle, body: event.target.value })} /><button type="submit">Publish</button></form>
+          </section>
+        )}
+
+        {activeView === 'Services' && (
+          <section className="grid-main-side">
+            <div className="grid-two"><div className="card"><div className="card-head"><h2>Services</h2><span>{services.length}</span></div><div className="table-list">{services.map((service) => <div key={service.id} className="resource-row"><div><strong>{service.name}</strong><span>Department #{service.departmentId || 'n/a'} / Service</span></div><button className="danger-button ghost-danger" onClick={() => deleteResource('services', service.id)}>Delete</button></div>)}</div></div><div className="card"><div className="card-head"><h2>SLA policies</h2><span>{slaPolicies.length}</span></div><div className="table-list">{slaPolicies.map((policy) => <div key={policy.id} className="resource-row"><div><strong>{policy.name}</strong><span>{policy.priority} / {policy.responseHours}h response / {policy.resolutionHours}h resolution</span></div><button className="danger-button ghost-danger" onClick={() => deleteResource('sla-policies', policy.id)}>Delete</button></div>)}</div></div></div>
+            <div className="side-stack"><form className="card side-card" onSubmit={createService}><h2>Add service</h2><input placeholder="Service name" value={newService.name} onChange={(event) => setNewService({ ...newService, name: event.target.value })} /><input placeholder="Department ID" value={newService.departmentId} onChange={(event) => setNewService({ ...newService, departmentId: event.target.value })} /><button type="submit">Create</button></form><form className="card side-card" onSubmit={createSla}><h2>Add SLA</h2><input placeholder="Policy name" value={newSla.name} onChange={(event) => setNewSla({ ...newSla, name: event.target.value })} /><select value={newSla.priority} onChange={(event) => setNewSla({ ...newSla, priority: event.target.value })}><option>High</option><option>Medium</option><option>Low</option></select><input type="number" min="1" value={newSla.responseHours} onChange={(event) => setNewSla({ ...newSla, responseHours: Number(event.target.value) })} /><input type="number" min="1" value={newSla.resolutionHours} onChange={(event) => setNewSla({ ...newSla, resolutionHours: Number(event.target.value) })} /><button type="submit">Create SLA</button></form></div>
+          </section>
+        )}
+
+        {activeView === 'Automation' && (
+          <section className="grid-two">
+            <form className="card" onSubmit={searchAll}><div className="card-head"><h2>Search and cache</h2>{searchResult && <span>{searchResult.cached ? 'Cached' : 'Fresh'}</span>}</div><div className="inline-form"><input placeholder="Search tickets, customers, articles..." value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} /><button type="submit">Search</button></div><SearchResultSummary result={searchResult} /></form>
+            <div className="card"><div className="card-head"><h2>AI assistant</h2></div><textarea placeholder="Ask about ticket priority, customer follow-up, queue risks..." value={aiMessage} onChange={(event) => setAiMessage(event.target.value)} /><button onClick={askAi}>Ask assistant</button>{aiReply && <div className="assistant-reply">{aiReply}</div>}</div>
+          </section>
+        )}
+
+        {activeView === 'Activity' && (
+          <section className="grid-main-side">
+            <div className="card"><div className="card-head"><h2>Ticket history</h2><span>{histories.length}</span></div><div className="timeline">{histories.map((history) => <div key={history.id}><strong>{formatLabel(history.action)}</strong><span>Ticket #{history.ticketId}</span></div>)}</div></div>
+            <form className="card side-card" onSubmit={enqueueJob}><h2>Queue job</h2><input value={newJob.type} onChange={(event) => setNewJob({ ...newJob, type: event.target.value })} /><textarea value={newJob.payload} onChange={(event) => setNewJob({ ...newJob, payload: event.target.value })} /><button type="submit">Queue</button><div className="table-list">{jobs.slice(-4).reverse().map((job) => <div key={job.id} className="table-row with-action"><strong>{job.type}</strong><span>{job.status}</span><span>{job.result || 'Pending'}</span><button className="danger-button ghost-danger" onClick={(event) => { event.preventDefault(); deleteResource('jobs', job.id) }}>Delete</button></div>)}</div></form>
+          </section>
+        )}
+
+        {activeView === 'Settings' && (
+          <section className="settings-page">
+            <div className="card settings-shell">
+              <div className="card-head"><div><h2>Settings</h2><p className="muted">Manage your profile, workspace preferences and notification defaults.</p></div></div>
+              <div className="settings-tabs">
+                {['Profile', 'Preferences', 'Notifications', 'System'].map((tab) => <button key={tab} className={settingsTab === tab ? 'active' : ''} onClick={() => setSettingsTab(tab)}>{tab}</button>)}
+              </div>
+
+              {settingsTab === 'Profile' && (
+                <div className="settings-section">
+                  <div className="profile-header"><span>{initials(profileSettings.name || user.name)}</span><div><strong>{profileSettings.name || user.name}</strong><small>{profileSettings.email || user.email}</small></div></div>
+                  <div className="settings-form-grid">
+                    <label>Full name<input value={profileSettings.name || user.name || ''} onChange={(event) => setProfileSettings({ ...profileSettings, name: event.target.value })} /></label>
+                    <label>Email<input value={profileSettings.email || user.email || ''} onChange={(event) => setProfileSettings({ ...profileSettings, email: event.target.value })} /></label>
+                    <label>Role<input value={profileSettings.role || user.role || ''} onChange={(event) => setProfileSettings({ ...profileSettings, role: event.target.value })} /></label>
+                    <label>Department<input value={profileSettings.department} onChange={(event) => setProfileSettings({ ...profileSettings, department: event.target.value })} /></label>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === 'Preferences' && (
+                <div className="settings-section">
+                  <label className="setting-row"><span><strong>Dark mode</strong><small>Switch between light and dark workspace themes.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label>
+                  <label className="setting-row"><span><strong>Compact mode</strong><small>Use tighter spacing for dense ticket work.</small></span><input type="checkbox" checked={preferenceSettings.compactMode} onChange={(event) => setPreferenceSettings({ ...preferenceSettings, compactMode: event.target.checked })} /></label>
+                  <div className="settings-form-grid">
+                    <label>Start page<select value={preferenceSettings.startPage} onChange={(event) => setPreferenceSettings({ ...preferenceSettings, startPage: event.target.value })}>{visibleNavItems.map((item) => <option key={item}>{item}</option>)}</select></label>
+                    <label>Default priority<select value={preferenceSettings.defaultPriority} onChange={(event) => setPreferenceSettings({ ...preferenceSettings, defaultPriority: event.target.value })}><option>High</option><option>Medium</option><option>Low</option></select></label>
+                    <label>Default category<input value={preferenceSettings.defaultCategory} onChange={(event) => { setPreferenceSettings({ ...preferenceSettings, defaultCategory: event.target.value }); setNewTicket({ ...newTicket, category: event.target.value }) }} /></label>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === 'Notifications' && (
+                <div className="settings-section">
+                  <label className="setting-row"><span><strong>Email alerts</strong><small>Receive updates when tickets are created or changed.</small></span><input type="checkbox" checked={notificationSettings.emailAlerts} onChange={(event) => setNotificationSettings({ ...notificationSettings, emailAlerts: event.target.checked })} /></label>
+                  <label className="setting-row"><span><strong>High priority alerts</strong><small>Highlight urgent tickets as soon as they enter the queue.</small></span><input type="checkbox" checked={notificationSettings.highPriorityAlerts} onChange={(event) => setNotificationSettings({ ...notificationSettings, highPriorityAlerts: event.target.checked })} /></label>
+                  <label className="setting-row"><span><strong>Daily summary</strong><small>Prepare a daily overview of open tickets and queue health.</small></span><input type="checkbox" checked={notificationSettings.dailySummary} onChange={(event) => setNotificationSettings({ ...notificationSettings, dailySummary: event.target.checked })} /></label>
+                </div>
+              )}
+
+              {settingsTab === 'System' && (
+                <div className="settings-section">
+                  <div className="settings-info-grid">
+                    <div><span>API base URL</span><strong>{API_BASE_URL}</strong></div>
+                    <div><span>Theme</span><strong>{darkMode ? 'Dark' : 'Light'}</strong></div>
+                    <div><span>Signed in as</span><strong>{user.email}</strong></div>
+                    <div><span>Role</span><strong>{user.role}</strong></div>
+                  </div>
+                  <div className="actions"><button className="secondary-button" onClick={() => { localStorage.removeItem('helpdesk-profile-settings'); localStorage.removeItem('helpdesk-preference-settings'); localStorage.removeItem('helpdesk-notification-settings') }}>Reset local settings</button></div>
+                </div>
+              )}
             </div>
           </section>
+        )}
 
-          <section className="metrics">
-            <div className="metric-card">
-              <span>Open tickets</span>
-              <strong>{openTicketCount}</strong>
-              <small>{resolvedTicketCount} resolved or closed</small>
-            </div>
-            <div className="metric-card">
-              <span>Customers</span>
-              <strong>{dashboard?.totals?.customers ?? customers.length}</strong>
-              <small>{customers.length ? 'Directory active' : 'No records yet'}</small>
-            </div>
-            <div className="metric-card">
-              <span>High priority</span>
-              <strong>{highPriorityCount}</strong>
-              <small>Needs fast response</small>
-            </div>
-            <div className="metric-card">
-              <span>Queued jobs</span>
-              <strong>{dashboard?.totals?.openJobs ?? 0}</strong>
-              <small>{jobs.length} total jobs</small>
-            </div>
-          </section>
-
-          {activeView === 'Overview' && (
-            <>
-              <section className="grid">
-                <div className="panel">
-                  <div className="section-title">
-                    <div>
-                      <span className="eyebrow">Live overview</span>
-                      <h2>Ticket health</h2>
-                    </div>
-                  </div>
-                  <div className="bar-list">
-                    {statusEntries.length ? statusEntries.map(([status, count]) => (
-                      <div key={status} className="bar-row">
-                        <span>{formatLabel(status)}</span>
-                        <div><i style={{ width: `${Math.max(12, count * 18)}%` }} /></div>
-                        <strong>{count}</strong>
-                      </div>
-                    )) : <EmptyState title="No ticket data" text="Create or import tickets to populate this view." />}
-                  </div>
-                </div>
-
-                <div className="panel">
-                  <div className="section-title">
-                    <div>
-                      <span className="eyebrow">Priority mix</span>
-                      <h2>Workload signals</h2>
-                    </div>
-                  </div>
-                  <div className="tag-cloud">
-                    {priorityEntries.length ? priorityEntries.map(([priority, count]) => (
-                      <span key={priority}>{priority}: {count}</span>
-                    )) : <span>No priorities yet</span>}
-                  </div>
-                  <div className="recent-list">
-                    {(dashboard?.recentTickets || []).map((ticket) => (
-                      <button key={ticket.id} onClick={() => { setSelectedTicket(ticket); setActiveView('Tickets') }}>
-                        <strong>#{ticket.id} {ticket.title}</strong>
-                        <span>{formatLabel(ticket.status)} / {ticket.priority}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </section>
-
-              <section className="grid three-col">
-                <div className="panel compact-panel">
-                  <span className="eyebrow">Queue focus</span>
-                  <h2>{openTicketCount} active tickets</h2>
-                  <p className="muted">Use the ticket workspace to triage, comment and move cases through status states.</p>
-                  <button onClick={() => setActiveView('Tickets')}>Open tickets</button>
-                </div>
-
-                <div className="panel compact-panel">
-                  <span className="eyebrow">Customer coverage</span>
-                  <h2>{customers.length} customers</h2>
-                  <p className="muted">Keep customer context visible when support volume grows.</p>
-                  <button onClick={() => setActiveView('Customers')}>Open directory</button>
-                </div>
-
-                <div className="panel compact-panel">
-                  <span className="eyebrow">Knowledge base</span>
-                  <h2>{articles.length} articles</h2>
-                  <p className="muted">Capture repeat fixes so agents solve issues faster.</p>
-                  <button onClick={() => setActiveView('Knowledge')}>Open articles</button>
-                </div>
-              </section>
-
-              <section className="grid">
-                <form className="panel" onSubmit={searchAll}>
-                  <h2>Global search</h2>
-                  <div className="inline-form">
-                    <input value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} />
-                    <button type="submit">Search</button>
-                  </div>
-                  {searchResult && <p className="muted">{searchResult.cached ? 'Cached' : 'Fresh'} results: {searchResult.results.length}</p>}
-                </form>
-
-                <div className="panel">
-                  <h2>AI assistant</h2>
-                  <div className="inline-form">
-                    <input value={aiMessage} onChange={(event) => setAiMessage(event.target.value)} />
-                    <button onClick={askAi}>Ask</button>
-                  </div>
-                  {aiReply && <p className="assistant-reply">{aiReply}</p>}
-                </div>
-              </section>
-            </>
-          )}
-
-          {activeView === 'Tickets' && (
-            <>
-              <section className="grid tickets-grid">
-                <div className="panel">
-                  <div className="section-title">
-                    <div>
-                      <span className="eyebrow">Queue</span>
-                      <h2>Tickets</h2>
-                    </div>
-                    <span className="count-pill">{tickets.length}</span>
-                  </div>
-                  <input placeholder="Search tickets" value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} />
-                  <div className="ticket-list">
-                    {tickets.map((ticket) => (
-                      <button key={ticket.id} className={ticket.id === selectedTicket?.id ? 'selected' : ''} onClick={() => setSelectedTicket(ticket)}>
-                        <strong>#{ticket.id} {ticket.title}</strong>
-                        <span>{formatLabel(ticket.status)} / {ticket.priority}</span>
-                      </button>
-                    ))}
-                    {!tickets.length && <EmptyState title="No tickets found" text="Try a different search or create a ticket." />}
-                  </div>
-                </div>
-
-                <div className="panel">
-                  <div className="section-title">
-                    <div>
-                      <span className="eyebrow">Case detail</span>
-                      <h2>{selectedTicket?.title || 'Ticket detail'}</h2>
-                    </div>
-                  </div>
-                  {selectedTicket ? (
-                    <>
-                      <div className="status-row">
-                        {statuses.map((status) => (
-                          <button key={status} className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>
-                            {formatLabel(status)}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="detail-box">
-                        <p>{selectedTicket.description || selectedTicket.category}</p>
-                        <span>{selectedTicket.category} / {selectedTicket.priority}</span>
-                      </div>
-                      <div className="comments">
-                        {comments.map((comment) => <p key={comment.id}>{comment.body}</p>)}
-                        {!comments.length && <EmptyState title="No comments" text="Add the first update for this ticket." />}
-                      </div>
-                      <form className="inline-form" onSubmit={addComment}>
-                        <input name="comment" placeholder="Add comment" />
-                        <button type="submit">Add</button>
-                      </form>
-                    </>
-                  ) : <EmptyState title="Select a ticket" text="Ticket details and comments will appear here." />}
-                </div>
-              </section>
-
-              <section className="panel">
-                <h2>Create ticket</h2>
-                <form className="ticket-form" onSubmit={createTicket}>
-                  <input placeholder="Title" value={newTicket.title} onChange={(event) => setNewTicket({ ...newTicket, title: event.target.value })} />
-                  <input placeholder="Description" value={newTicket.description} onChange={(event) => setNewTicket({ ...newTicket, description: event.target.value })} />
-                  <select value={newTicket.priority} onChange={(event) => setNewTicket({ ...newTicket, priority: event.target.value })}>
-                    <option>High</option>
-                    <option>Medium</option>
-                    <option>Low</option>
-                  </select>
-                  <input placeholder="Category" value={newTicket.category} onChange={(event) => setNewTicket({ ...newTicket, category: event.target.value })} />
-                  <button type="submit">Create</button>
-                </form>
-              </section>
-            </>
-          )}
-
-          {activeView === 'Customers' && (
-            <section className="grid">
-              <div className="panel">
-                <div className="section-title">
-                  <div>
-                    <span className="eyebrow">Directory</span>
-                    <h2>Customers</h2>
-                  </div>
-                  <span className="count-pill">{customers.length}</span>
-                </div>
-                <div className="table-list">
-                  {customers.map((customer) => (
-                    <div key={customer.id} className="table-row">
-                      <strong>{customer.name}</strong>
-                      <span>{customer.email}</span>
-                      <span>{customer.company || 'No company'}</span>
-                    </div>
-                  ))}
-                  {!customers.length && <EmptyState title="No customers" text="Create a customer profile to start tracking cases." />}
-                </div>
-              </div>
-
-              <form className="panel" onSubmit={createCustomer}>
-                <h2>Add customer</h2>
-                <input placeholder="Name" value={newCustomer.name} onChange={(event) => setNewCustomer({ ...newCustomer, name: event.target.value })} />
-                <input placeholder="Email" value={newCustomer.email} onChange={(event) => setNewCustomer({ ...newCustomer, email: event.target.value })} />
-                <input placeholder="Company" value={newCustomer.company} onChange={(event) => setNewCustomer({ ...newCustomer, company: event.target.value })} />
-                <button type="submit">Create customer</button>
-              </form>
-            </section>
-          )}
-
-          {activeView === 'Services' && (
-            <>
-              <section className="grid">
-                <div className="panel">
-                  <div className="section-title">
-                    <div>
-                      <span className="eyebrow">Catalog</span>
-                      <h2>Services</h2>
-                    </div>
-                    <span className="count-pill">{services.length}</span>
-                  </div>
-                  <div className="table-list">
-                    {services.map((service) => (
-                      <div key={service.id} className="table-row compact">
-                        <strong>{service.name}</strong>
-                        <span>Department #{service.departmentId || 'n/a'}</span>
-                        <span>Service ID {service.id}</span>
-                      </div>
-                    ))}
-                    {!services.length && <EmptyState title="No services" text="Create service catalog entries for support teams." />}
-                  </div>
-                </div>
-
-                <form className="panel" onSubmit={createService}>
-                  <h2>Add service</h2>
-                  <input placeholder="Service name" value={newService.name} onChange={(event) => setNewService({ ...newService, name: event.target.value })} />
-                  <input placeholder="Department ID" value={newService.departmentId} onChange={(event) => setNewService({ ...newService, departmentId: event.target.value })} />
-                  <button type="submit">Create service</button>
-                </form>
-              </section>
-
-              <section className="grid">
-                <div className="panel">
-                  <div className="section-title">
-                    <div>
-                      <span className="eyebrow">Response targets</span>
-                      <h2>SLA policies</h2>
-                    </div>
-                    <span className="count-pill">{slaPolicies.length}</span>
-                  </div>
-                  <div className="table-list">
-                    {slaPolicies.map((policy) => (
-                      <div key={policy.id} className="table-row">
-                        <strong>{policy.name}</strong>
-                        <span>{policy.priority} priority</span>
-                        <span>{policy.responseHours}h response / {policy.resolutionHours}h resolve</span>
-                      </div>
-                    ))}
-                    {!slaPolicies.length && <EmptyState title="No SLA policies" text="Add SLA targets to make the service catalog operational." />}
-                  </div>
-                </div>
-
-                <form className="panel" onSubmit={createSla}>
-                  <h2>Add SLA policy</h2>
-                  <input placeholder="Policy name" value={newSla.name} onChange={(event) => setNewSla({ ...newSla, name: event.target.value })} />
-                  <select value={newSla.priority} onChange={(event) => setNewSla({ ...newSla, priority: event.target.value })}>
-                    <option>High</option>
-                    <option>Medium</option>
-                    <option>Low</option>
-                  </select>
-                  <input type="number" min="1" placeholder="Response hours" value={newSla.responseHours} onChange={(event) => setNewSla({ ...newSla, responseHours: Number(event.target.value) })} />
-                  <input type="number" min="1" placeholder="Resolution hours" value={newSla.resolutionHours} onChange={(event) => setNewSla({ ...newSla, resolutionHours: Number(event.target.value) })} />
-                  <button type="submit">Create SLA</button>
-                </form>
-              </section>
-            </>
-          )}
-
-          {activeView === 'Knowledge' && (
-            <section className="grid">
-              <div className="panel">
-                <div className="section-title">
-                  <div>
-                    <span className="eyebrow">Self service</span>
-                    <h2>Knowledge articles</h2>
-                  </div>
-                  <span className="count-pill">{articles.length}</span>
-                </div>
-                <div className="article-list">
-                  {articles.map((article) => (
-                    <article key={article.id}>
-                      <span>{article.category}</span>
-                      <h3>{article.title}</h3>
-                      <p>{article.body}</p>
-                    </article>
-                  ))}
-                  {!articles.length && <EmptyState title="No articles" text="Publish common fixes to help agents resolve tickets faster." />}
-                </div>
-              </div>
-
-              <form className="panel" onSubmit={createArticle}>
-                <h2>New article</h2>
-                <input placeholder="Title" value={newArticle.title} onChange={(event) => setNewArticle({ ...newArticle, title: event.target.value })} />
-                <input placeholder="Category" value={newArticle.category} onChange={(event) => setNewArticle({ ...newArticle, category: event.target.value })} />
-                <textarea placeholder="Body" value={newArticle.body} onChange={(event) => setNewArticle({ ...newArticle, body: event.target.value })} />
-                <label className="checkbox-row">
-                  <input type="checkbox" checked={newArticle.published} onChange={(event) => setNewArticle({ ...newArticle, published: event.target.checked })} />
-                  Published
-                </label>
-                <button type="submit">Publish article</button>
-              </form>
-            </section>
-          )}
-
-          {activeView === 'Activity' && (
-            <section className="grid">
-              <div className="panel">
-                <div className="section-title">
-                  <div>
-                    <span className="eyebrow">Audit trail</span>
-                    <h2>Ticket history</h2>
-                  </div>
-                  <span className="count-pill">{histories.length}</span>
-                </div>
-                <div className="timeline">
-                  {histories.map((history) => (
-                    <div key={history.id}>
-                      <strong>{formatLabel(history.action)}</strong>
-                      <span>Ticket #{history.ticketId} {history.fromStatus ? `${formatLabel(history.fromStatus)} to ${formatLabel(history.toStatus)}` : formatLabel(history.toStatus)}</span>
-                    </div>
-                  ))}
-                  {!histories.length && <EmptyState title="No history yet" text="Ticket changes will appear in this activity stream." />}
-                </div>
-              </div>
-
-              <div className="panel">
-                <div className="section-title">
-                  <div>
-                    <span className="eyebrow">Background queue</span>
-                    <h2>Jobs</h2>
-                  </div>
-                  <span className="count-pill">{jobs.length}</span>
-                </div>
-                <div className="table-list">
-                  {jobs.slice(-6).reverse().map((job) => (
-                    <div key={job.id} className="table-row compact">
-                      <strong>{job.type}</strong>
-                      <span>{job.status}</span>
-                      <span>{job.result || 'Pending'}</span>
-                    </div>
-                  ))}
-                  {!jobs.length && <EmptyState title="No jobs" text="Automations and notifications will be queued here." />}
-                </div>
-                <form className="stack-form" onSubmit={enqueueJob}>
-                  <input placeholder="Job type" value={newJob.type} onChange={(event) => setNewJob({ ...newJob, type: event.target.value })} />
-                  <textarea value={newJob.payload} onChange={(event) => setNewJob({ ...newJob, payload: event.target.value })} />
-                  <button type="submit">Queue job</button>
-                </form>
-              </div>
-            </section>
-          )}
-
-          {activeView === 'Automation' && (
-            <section className="grid">
-              <form className="panel" onSubmit={searchAll}>
-                <div>
-                  <span className="eyebrow">Redis backed</span>
-                  <h2>Search and cache</h2>
-                </div>
-                <div className="inline-form">
-                  <input value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} />
-                  <button type="submit">Search</button>
-                </div>
-                {searchResult && (
-                  <div className="result-box">
-                    <strong>{searchResult.cached ? 'Cached response' : 'Fresh response'}</strong>
-                    <span>{searchResult.results.length} results returned</span>
-                  </div>
-                )}
-              </form>
-
-              <div className="panel">
-                <div>
-                  <span className="eyebrow">OpenAI endpoint</span>
-                  <h2>AI assistant</h2>
-                </div>
-                <div className="inline-form">
-                  <input value={aiMessage} onChange={(event) => setAiMessage(event.target.value)} />
-                  <button onClick={askAi}>Ask</button>
-                </div>
-                {aiReply && <p className="assistant-reply">{aiReply}</p>}
-              </div>
-            </section>
-          )}
-
-          {activeView === 'Admin' && (
-            <section className="grid">
-              <div className="panel">
-                <div className="section-title">
-                  <div>
-                    <span className="eyebrow">Access control</span>
-                    <h2>Users</h2>
-                  </div>
-                  <span className="count-pill">{users.length}</span>
-                </div>
-                <div className="table-list">
-                  {users.map((row) => (
-                    <div key={row.id} className="table-row">
-                      <strong>{row.name}</strong>
-                      <span>{row.email}</span>
-                      <span>{row.role}</span>
-                    </div>
-                  ))}
-                  {!users.length && <EmptyState title="No admin data" text="Admin users can review account access here." />}
-                </div>
-              </div>
-
-              <div className="panel">
-                <div>
-                  <span className="eyebrow">System docs</span>
-                  <h2>API coverage</h2>
-                </div>
-                <p className="muted">The backend exposes authenticated CRUD resources, search, AI chat, job queue and Swagger documentation.</p>
-                <a className="button-link" href={`${API_BASE_URL}/api-docs`} target="_blank" rel="noreferrer">Open Swagger</a>
-              </div>
-            </section>
-          )}
-        </div>
+        {activeView === 'Admin' && (
+          <section className="grid-main-side"><div className="card"><div className="card-head"><h2>Users</h2><span>{users.length}</span></div><div className="table-list">{users.map((row) => <div key={row.id} className="table-row"><strong>{row.name}</strong><span>{row.email}</span><span>{row.role}</span></div>)}</div></div><div className="card side-card"><h2>System</h2><p className="muted">Authenticated REST API, search, background jobs and AI assistant are available for this workspace.</p></div></section>
+        )}
       </section>
     </main>
   )

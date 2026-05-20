@@ -1,12 +1,17 @@
+'use client'
+
 import { useMemo, useState } from 'react'
 import { AuthContext } from './authStore.js'
 import { apiRequest } from '../api.js'
 
 
 export function AuthProvider({ children }) {
-  const [session, setSession] = useState({
-    token: localStorage.getItem('helpdesk_token') || '',
-    user: JSON.parse(localStorage.getItem('helpdesk_user') || 'null'),
+  const [session, setSession] = useState(() => {
+    if (typeof window === 'undefined') return { token: '', user: null }
+    return {
+      token: localStorage.getItem('helpdesk_token') || '',
+      user: JSON.parse(localStorage.getItem('helpdesk_user') || 'null'),
+    }
   })
 
   const login = async (email, password) => {
