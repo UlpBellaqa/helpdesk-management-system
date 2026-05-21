@@ -6,7 +6,7 @@ import { API_BASE_URL, ApiRequestError, apiRequest } from './api.js'
 import { useAuth } from './state/useAuth.js'
 
 const statuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed']
-const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'Services', 'Automation', 'Activity', 'Settings', 'Admin']
+const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'Services', 'Automation', 'Activity', 'Settings']
 const maxAttachmentBytes = 5 * 1024 * 1024
 
 function formatLabel(value) {
@@ -120,7 +120,7 @@ function App() {
   const [services, setServices] = useState([])
   const [jobs, setJobs] = useState([])
   const [histories, setHistories] = useState([])
-  const [users, setUsers] = useState([])
+  const [notifications, setNotifications] = useState([])
   const [selectedTicket, setSelectedTicket] = useState(null)
   const [comments, setComments] = useState([])
   const [attachments, setAttachments] = useState([])
@@ -137,8 +137,7 @@ function App() {
   const [newJob, setNewJob] = useState({ type: 'email', payload: '{"reason":"manual follow-up"}' })
 
   const visibleNavItems = useMemo(() => {
-    if (user?.role === 'customer') return navItems.filter((item) => !['Automation', 'Admin'].includes(item))
-    if (user?.role !== 'admin') return navItems.filter((item) => item !== 'Admin')
+    if (user?.role === 'customer') return navItems.filter((item) => !['Automation'].includes(item))
     return navItems
   }, [user])
 
@@ -146,6 +145,7 @@ function App() {
   const highPriorityTickets = tickets.filter((ticket) => ticket.priority === 'High')
   const selectedCustomer = customers.find((customer) => customer.id === selectedTicket?.customerId)
   const statusEntries = Object.entries(dashboard?.byStatus || {})
+  const unreadNotifications = notifications.filter((notification) => notification.status !== 'read')
 
   useEffect(() => {
     localStorage.setItem('helpdesk-theme', darkMode ? 'dark' : 'light')
@@ -170,13 +170,14 @@ function App() {
   }
 
   const loadWorkspace = useCallback(async () => {
-    const [summary, customerRows, articleRows, serviceRows, jobRows, historyRows] = await Promise.all([
+    const [summary, customerRows, articleRows, serviceRows, jobRows, historyRows, notificationRows] = await Promise.all([
       apiRequest('/api/dashboard/summary', { token }),
       apiRequest('/api/customers', { token }),
       apiRequest('/api/articles', { token }),
       apiRequest('/api/services', { token }),
       apiRequest('/api/jobs', { token }),
       apiRequest('/api/histories', { token }),
+      apiRequest('/api/notifications', { token }),
     ])
     setDashboard(summary)
     setCustomers(customerRows)
@@ -184,7 +185,7 @@ function App() {
     setServices(serviceRows)
     setJobs(jobRows)
     setHistories(historyRows)
-    setUsers([])
+    setNotifications(notificationRows)
   }, [token])
 
   async function refreshWorkspace() {
@@ -415,6 +416,16 @@ function App() {
     await loadWorkspace()
   }
 
+  async function markNotificationRead(notificationId) {
+    const updated = await apiRequest(`/api/notifications/${notificationId}/read`, { token, method: 'PATCH' })
+    setNotifications((rows) => rows.map((row) => row.id === updated.id ? updated : row))
+  }
+
+  async function deleteNotification(notificationId) {
+    await apiRequest(`/api/notifications/${notificationId}`, { token, method: 'DELETE' })
+    setNotifications((rows) => rows.filter((row) => row.id !== notificationId))
+  }
+
   async function searchAll(event) {
     event.preventDefault()
     if (!globalSearch.trim()) return
@@ -501,7 +512,7 @@ function App() {
 
       <section className="workspace">
         <header className="topbar">
-          <div><h1>{activeView}</h1><p>{openTickets.length} open tickets / {highPriorityTickets.length} high priority</p></div>
+          <div><h1>{activeView}</h1><p>{openTickets.length} open tickets / {highPriorityTickets.length} high priority / {unreadNotifications.length} unread notifications</p></div>
           <div className="actions"><button className="secondary-button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? 'Light' : 'Dark'}</button><button onClick={logout}>Logout</button></div>
         </header>
 
@@ -672,6 +683,23 @@ function App() {
                   <label className="setting-row"><span><strong>Email alerts</strong><small>Receive updates when tickets are created or changed.</small></span><input type="checkbox" checked={notificationSettings.emailAlerts} onChange={(event) => setNotificationSettings({ ...notificationSettings, emailAlerts: event.target.checked })} /></label>
                   <label className="setting-row"><span><strong>High priority alerts</strong><small>Highlight urgent tickets as soon as they enter the queue.</small></span><input type="checkbox" checked={notificationSettings.highPriorityAlerts} onChange={(event) => setNotificationSettings({ ...notificationSettings, highPriorityAlerts: event.target.checked })} /></label>
                   <label className="setting-row"><span><strong>Daily summary</strong><small>Prepare a daily overview of open tickets and queue health.</small></span><input type="checkbox" checked={notificationSettings.dailySummary} onChange={(event) => setNotificationSettings({ ...notificationSettings, dailySummary: event.target.checked })} /></label>
+                  <div className="section-head"><h3>Inbox</h3><span className="save-status">{unreadNotifications.length} unread</span></div>
+                  <div className="notification-list">
+                    {notifications.map((notification) => (
+                      <div key={notification.id} className={`notification-row ${notification.status !== 'read' ? 'unread' : ''}`}>
+                        <div>
+                          <strong>{notification.data?.title || formatLabel(notification.type)}</strong>
+                          <span>{formatLabel(notification.type)} / {notification.status || 'unread'}</span>
+                        </div>
+                        <p>{notification.payload?.title || notification.payload?.fileName || notification.payload?.email || `Ticket #${notification.payload?.ticketId || 'n/a'}`}</p>
+                        <div className="notification-actions">
+                          {notification.status !== 'read' && <button className="secondary-button" type="button" onClick={() => markNotificationRead(notification.id)}>Mark read</button>}
+                          <button className="danger-button ghost-danger" type="button" onClick={() => deleteNotification(notification.id)}>Delete</button>
+                        </div>
+                      </div>
+                    ))}
+                    {!notifications.length && <EmptyState title="No notifications" text="Ticket and admin events will appear here." />}
+                  </div>
                 </div>
               )}
 
@@ -688,10 +716,6 @@ function App() {
               )}
             </div>
           </section>
-        )}
-
-        {activeView === 'Admin' && (
-          <section className="grid-main-side"><div className="card"><div className="card-head"><h2>Users</h2><span>{users.length}</span></div><div className="table-list">{users.map((row) => <div key={row.id} className="table-row"><strong>{row.name}</strong><span>{row.email}</span><span>{row.role}</span></div>)}</div></div><div className="card side-card"><h2>System</h2><p className="muted">Authenticated REST API, search, background jobs and AI assistant are available for this workspace.</p></div></section>
         )}
       </section>
     </main>

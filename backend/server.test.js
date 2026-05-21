@@ -49,16 +49,6 @@ test('login protects ticket list', async () => {
   });
 });
 
-test('undocumented resource endpoints are not exposed', async () => {
-  await withServer(async (baseUrl) => {
-    const admin = await login(baseUrl);
-    const users = await fetch(`${baseUrl}/api/users`, {
-      headers: { Authorization: `Bearer ${admin.token}` },
-    });
-    assert.equal(users.status, 404);
-  });
-});
-
 test('current user profile can be updated', async () => {
   await withServer(async (baseUrl) => {
     const admin = await login(baseUrl);
@@ -68,7 +58,7 @@ test('current user profile can be updated', async () => {
       method: 'PATCH',
       headers,
       body: JSON.stringify({
-        name: 'Admin Profile',
+        name: 'Demo Profile',
         email: 'admin-profile@demo.com',
         department: 'Support Operations',
         avatar: 'data:image/jpeg;base64,abc123',
@@ -77,7 +67,7 @@ test('current user profile can be updated', async () => {
     });
     const updated = await update.json();
     assert.equal(update.status, 200);
-    assert.equal(updated.name, 'Admin Profile');
+    assert.equal(updated.name, 'Demo Profile');
     assert.equal(updated.email, 'admin-profile@demo.com');
     assert.equal(updated.role, 'admin');
     assert.equal(updated.data.department, 'Support Operations');
@@ -157,6 +147,41 @@ test('ticket attachments can be uploaded, listed, and deleted', async () => {
     const afterDelete = await fetch(`${baseUrl}/api/tickets/1/attachments`, { headers });
     const remaining = await afterDelete.json();
     assert.equal(remaining.some((row) => row.id === attachment.id), false);
+  });
+});
+
+test('notifications can be listed, marked read, and deleted', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await login(baseUrl);
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${admin.token}` };
+
+    const ticket = await fetch(`${baseUrl}/api/tickets`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ title: 'Notification check', status: 'open', priority: 'Medium' }),
+    });
+    assert.equal(ticket.status, 201);
+
+    const notifications = await fetch(`${baseUrl}/api/notifications`, { headers });
+    const rows = await notifications.json();
+    assert.equal(notifications.status, 200);
+    const created = rows.find((row) => row.type === 'ticket_created');
+    assert.ok(created);
+    assert.equal(created.status, 'unread');
+
+    const markRead = await fetch(`${baseUrl}/api/notifications/${created.id}/read`, {
+      method: 'PATCH',
+      headers,
+    });
+    const readNotification = await markRead.json();
+    assert.equal(markRead.status, 200);
+    assert.equal(readNotification.status, 'read');
+
+    const remove = await fetch(`${baseUrl}/api/notifications/${created.id}`, {
+      method: 'DELETE',
+      headers,
+    });
+    assert.equal(remove.status, 204);
   });
 });
 

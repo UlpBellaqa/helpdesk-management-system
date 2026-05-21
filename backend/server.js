@@ -7,7 +7,7 @@ const rateLimit = require('express-rate-limit');
 const { createStore, resourceConfigs } = require('./src/dataStore');
 const { buildSwaggerSpec, swaggerHtml } = require('./src/swagger');
 const { validateLoginRequest, validateRegisterRequest } = require('./src/validation');
-const { ApiError, BadRequestError, UnauthorizedError, ForbiddenError } = require('./src/errors');
+const { ApiError, BadRequestError, UnauthorizedError } = require('./src/errors');
 const { LoggingMiddleware, AuthenticationMiddleware } = require('./src/middleware');
 
 dotenv.config();
@@ -24,7 +24,6 @@ const allowedOrigins = new Set([
   'http://127.0.0.1:5173',
   ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
 ]);
-const adminResources = new Set(['users', 'roles', 'permissions', 'tenants']);
 const documentedResourceRoutes = {
   tickets: new Set(['getList', 'postList', 'getItem', 'putItem']),
   customers: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
@@ -71,6 +70,35 @@ function safeUser(user) {
   if (!user) return null;
   const { password, ...rest } = user;
   return rest;
+}
+
+async function ensureUniqueEmail(store, email, currentUserId) {
+  const existing = (await store.users.list({ filters: { email } }))
+    .find((row) => row.id !== currentUserId);
+  if (existing) throw new BadRequestError('Email already exists');
+}
+
+function notificationTitle(type) {
+  return {
+    ticket_created: 'Ticket created',
+    comment_added: 'Comment added',
+    status_changed: 'Ticket status changed',
+    attachment_added: 'Attachment added',
+    attachment_deleted: 'Attachment deleted',
+  }[type] || formatLabel(type);
+}
+
+async function createNotification(store, tenantIdValue, type, payload = {}, actorId) {
+  return store.notifications.create({
+    tenantId: tenantIdValue,
+    type,
+    payload,
+    status: 'unread',
+    data: {
+      title: notificationTitle(type),
+      actorId,
+    },
+  });
 }
 
 function profileData(user) {
@@ -344,11 +372,7 @@ function createApp(store) {
     if (!user) return notFound(res);
 
     const { payload, data } = sanitizeProfilePayload(req.body || {});
-    if (payload.email) {
-      const existing = (await store.users.list({ filters: { email: payload.email } }))
-        .find((row) => row.id !== user.id);
-      if (existing) throw new BadRequestError('Email already exists');
-    }
+    if (payload.email) await ensureUniqueEmail(store, payload.email, user.id);
 
     const updated = await store.users.update(user.id, {
       ...payload,
@@ -368,6 +392,20 @@ function createApp(store) {
 
   app.get('/api/dashboard/summary', asyncRoute(async (req, res) => {
     res.json(await store.dashboardSummary(tenantId(req)));
+  }));
+
+  app.get('/api/notifications', asyncRoute(async (req, res) => {
+    const rows = await store.notifications.list({ tenantId: tenantId(req) });
+    return res.json(rows.slice().reverse());
+  }));
+
+  app.patch('/api/notifications/:id/read', asyncRoute(async (req, res) => {
+    const notification = await store.notifications.update(req.params.id, { status: 'read' }, tenantId(req));
+    return notification ? res.json(notification) : notFound(res);
+  }));
+
+  app.delete('/api/notifications/:id', asyncRoute(async (req, res) => {
+    return (await store.notifications.delete(req.params.id, tenantId(req))) ? res.status(204).send() : notFound(res);
   }));
 
   app.get('/api/search', asyncRoute(async (req, res) => {
@@ -436,7 +474,9 @@ function createApp(store) {
   app.post('/api/tickets', asyncRoute(async (req, res) => {
     const customerId = await resolveTicketCustomer(store, req.body, tenantId(req));
     const payload = sanitizeTicketPayload({ ...req.body, tenantId: tenantId(req) }, customerId);
-    return res.status(201).json(await store.tickets.create(payload));
+    const ticket = await store.tickets.create(payload);
+    await createNotification(store, tenantId(req), 'ticket_created', { ticketId: ticket.id, title: ticket.title, priority: ticket.priority }, req.user.id);
+    return res.status(201).json(ticket);
   }));
 
   app.get('/api/tickets/:id/comments', asyncRoute(async (req, res) => {
@@ -451,6 +491,7 @@ function createApp(store) {
       internal: req.body.internal,
       authorId: req.user.id,
     }, tenantId(req));
+    if (comment) await createNotification(store, tenantId(req), 'comment_added', { ticketId: comment.ticketId, commentId: comment.id }, req.user.id);
     return comment ? res.status(201).json(comment) : notFound(res);
   }));
 
@@ -477,6 +518,7 @@ function createApp(store) {
       },
     });
     await store.histories.create({ tenantId: tenantId(req), ticketId: ticket.id, action: 'attachment_added', actorId: req.user.id });
+    await createNotification(store, tenantId(req), 'attachment_added', { ticketId: ticket.id, attachmentId: created.id, fileName: created.fileName }, req.user.id);
     return res.status(201).json(created);
   }));
 
@@ -489,6 +531,7 @@ function createApp(store) {
 
     await store.attachments.delete(attachment.id, tenantId(req));
     await store.histories.create({ tenantId: tenantId(req), ticketId: ticket.id, action: 'attachment_deleted', actorId: req.user.id });
+    await createNotification(store, tenantId(req), 'attachment_deleted', { ticketId: ticket.id, attachmentId: attachment.id, fileName: attachment.fileName }, req.user.id);
     return res.status(204).send();
   }));
 
@@ -535,6 +578,7 @@ function createApp(store) {
       return res.status(400).json({ message: `Status must be one of: ${allowedStatuses.join(', ')}` });
     }
     const ticket = await store.changeTicketStatus(req.params.id, req.body.status, req.user.id, tenantId(req));
+    if (ticket) await createNotification(store, tenantId(req), 'status_changed', { ticketId: ticket.id, title: ticket.title, status: ticket.status }, req.user.id);
     return ticket ? res.json(ticket) : notFound(res);
   }));
 
@@ -543,33 +587,28 @@ function createApp(store) {
     if (!allowedRoutes) return;
 
     if (allowedRoutes.has('getList')) app.get(`/api/${resource}`, asyncRoute(async (req, res) => {
-      if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const filters = { ...req.query };
       delete filters.q;
       return res.json(await repo.list({ tenantId: tenantId(req), search: req.query.q, filters }));
     }));
 
     if (allowedRoutes.has('postList')) app.post(`/api/${resource}`, asyncRoute(async (req, res) => {
-      if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const payload = prepareResourcePayload(req, resource);
       return res.status(201).json(await repo.create(payload));
     }));
 
     if (allowedRoutes.has('getItem')) app.get(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
-      if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const row = await repo.findById(req.params.id, tenantId(req));
       return row ? res.json(row) : notFound(res);
     }));
 
     if (allowedRoutes.has('putItem')) app.put(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
-      if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       const payload = sanitizeUpdatePayload(req, resource);
       const row = await repo.update(req.params.id, payload, tenantId(req));
       return row ? res.json(row) : notFound(res);
     }));
 
     if (allowedRoutes.has('deleteItem')) app.delete(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
-      if (adminResources.has(resource) && req.user.role !== 'admin') return res.status(403).json({ message: 'Admin role required' });
       return (await repo.delete(req.params.id, tenantId(req))) ? res.status(204).send() : notFound(res);
     }));
   });

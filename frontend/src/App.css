@@ -457,6 +457,7 @@
 .table-row,
 .resource-row,
 .attachment-row,
+.notification-row,
 .article-list article,
 .timeline div,
 .setting-row {
@@ -517,6 +518,49 @@
 
 .resource-row .danger-button {
   justify-self: end;
+}
+
+.notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.notification-list {
+  display: grid;
+  gap: 7px;
+}
+
+.notification-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.8fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.notification-row.unread {
+  border-color: var(--primary);
+  background: var(--card-muted);
+}
+
+.notification-row div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.notification-row strong,
+.notification-row span,
+.notification-row p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-row span,
+.notification-row p {
+  color: var(--muted);
 }
 
 .section-head {
@@ -860,6 +904,7 @@ button {
 .table-row.with-action,
 .resource-row,
 .attachment-row,
+.notification-row,
 .comment-row,
 .status-row,
 .setting-row {
@@ -871,6 +916,10 @@ button {
   }
 
   .attachment-actions {
+    justify-content: flex-start;
+  }
+
+  .notification-actions {
     justify-content: flex-start;
   }
 
@@ -1049,6 +1098,7 @@ body {
 .table-row,
 .resource-row,
 .attachment-row,
+.notification-row,
 .article-list article,
 .timeline div,
 .setting-row,
