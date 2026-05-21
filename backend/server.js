@@ -29,7 +29,7 @@ const documentedResourceRoutes = {
   tickets: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
   customers: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
   articles: new Set(['getList', 'postList']),
-  services: new Set(['getList', 'postList']),
+  services: new Set(['getList', 'postList', 'deleteItem']),
   jobs: new Set(['getList']),
   histories: new Set(['getList']),
 };
@@ -391,6 +391,24 @@ function createApp(store) {
       authorId: req.user.id,
     }, tenantId(req));
     return comment ? res.status(201).json(comment) : notFound(res);
+  }));
+
+  app.delete('/api/tickets/:ticketId/comments/:commentId', asyncRoute(async (req, res) => {
+    const ticket = await store.tickets.findById(req.params.ticketId, tenantId(req));
+    if (!ticket) return notFound(res);
+
+    const comment = await store.comments.findById(req.params.commentId, tenantId(req));
+    if (!comment || comment.ticketId !== ticket.id) return notFound(res);
+
+    await store.comments.delete(comment.id, tenantId(req));
+    await store.histories.create({
+      tenantId: tenantId(req),
+      ticketId: ticket.id,
+      action: 'comment_deleted',
+      actorId: req.user.id,
+      commentId: comment.id,
+    });
+    return res.status(204).send();
   }));
 
   app.patch('/api/tickets/:id/status', asyncRoute(async (req, res) => {
