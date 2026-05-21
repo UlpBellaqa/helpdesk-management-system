@@ -36,6 +36,32 @@ function readStoredTheme() {
   return localStorage.getItem('helpdesk-theme') === 'dark'
 }
 
+function resizeAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const image = new Image()
+      image.onload = () => {
+        const size = 384
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        const minSide = Math.min(image.width, image.height)
+        const sx = (image.width - minSide) / 2
+        const sy = (image.height - minSide) / 2
+
+        canvas.width = size
+        canvas.height = size
+        context.drawImage(image, sx, sy, minSide, minSide, 0, 0, size, size)
+        resolve(canvas.toDataURL('image/jpeg', 0.86))
+      }
+      image.onerror = () => reject(new Error('Could not read this image.'))
+      image.src = reader.result
+    }
+    reader.onerror = () => reject(new Error('Could not read this file.'))
+    reader.readAsDataURL(file)
+  })
+}
+
 function SearchResultSummary({ result }) {
   if (!result) return null
   return (
@@ -56,7 +82,7 @@ function App() {
   const [password, setPassword] = useState('')
   const [darkMode, setDarkMode] = useState(readStoredTheme)
   const [settingsTab, setSettingsTab] = useState('Profile')
-  const [profileSettings, setProfileSettings] = useState(() => readStoredJson('helpdesk-profile-settings', { name: '', email: '', role: '', department: 'Support Operations' }))
+  const [profileSettings, setProfileSettings] = useState(() => readStoredJson('helpdesk-profile-settings', { name: '', email: '', role: '', department: 'Support Operations', avatar: '' }))
   const [preferenceSettings, setPreferenceSettings] = useState(() => readStoredJson('helpdesk-preference-settings', { defaultPriority: 'Medium', defaultCategory: 'Software', startPage: 'Overview', compactMode: false }))
   const [notificationSettings, setNotificationSettings] = useState(() => readStoredJson('helpdesk-notification-settings', { emailAlerts: true, highPriorityAlerts: true, dailySummary: false }))
   const [dashboard, setDashboard] = useState(null)
@@ -325,6 +351,24 @@ function App() {
     }
   }
 
+  async function uploadProfilePhoto(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose an image file for your profile photo.')
+      return
+    }
+
+    setError('')
+    try {
+      const avatar = await resizeAvatar(file)
+      setProfileSettings((settings) => ({ ...settings, avatar }))
+    } catch (requestError) {
+      setError(requestError.message)
+    }
+  }
+
   if (!token) {
     return (
       <main className={`login-page ${darkMode ? 'theme-dark' : ''}`}>
@@ -456,7 +500,22 @@ function App() {
 
               {settingsTab === 'Profile' && (
                 <div className="settings-section">
-                  <div className="profile-header"><span>{initials(profileSettings.name || user.name)}</span><div><strong>{profileSettings.name || user.name}</strong><small>{profileSettings.email || user.email}</small></div></div>
+                  <div className="profile-header">
+                    <div className="profile-avatar">
+                      {profileSettings.avatar ? <img src={profileSettings.avatar} alt="" /> : <span>{initials(profileSettings.name || user.name)}</span>}
+                    </div>
+                    <div>
+                      <strong>{profileSettings.name || user.name}</strong>
+                      <small>{profileSettings.email || user.email}</small>
+                    </div>
+                  </div>
+                  <div className="profile-photo-actions">
+                    <label className="upload-button">
+                      Upload photo
+                      <input type="file" accept="image/*" onChange={uploadProfilePhoto} />
+                    </label>
+                    {profileSettings.avatar && <button className="secondary-button" type="button" onClick={() => setProfileSettings({ ...profileSettings, avatar: '' })}>Remove photo</button>}
+                  </div>
                   <div className="settings-form-grid">
                     <label>Full name<input value={profileSettings.name || user.name || ''} onChange={(event) => setProfileSettings({ ...profileSettings, name: event.target.value })} /></label>
                     <label>Email<input value={profileSettings.email || user.email || ''} onChange={(event) => setProfileSettings({ ...profileSettings, email: event.target.value })} /></label>
