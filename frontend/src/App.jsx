@@ -249,10 +249,11 @@ function App() {
 
   async function addComment(event) {
     event.preventDefault()
-    const body = event.currentTarget.elements.comment.value.trim()
+    const form = event.currentTarget
+    const body = form.elements.comment.value.trim()
     if (!body || !selectedTicket) return
     const comment = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token, method: 'POST', body: { body } })
-    event.currentTarget.reset()
+    form.reset()
     setComments((rows) => [...rows, comment])
   }
 
@@ -268,6 +269,13 @@ function App() {
     if (!window.confirm(`Delete this ${resource.replace('-', ' ')}?`)) return
     await apiRequest(`/api/${resource}/${id}`, { token, method: 'DELETE' })
     await refresh()
+  }
+
+  async function deleteComment(commentId) {
+    if (!selectedTicket || !window.confirm('Delete this comment?')) return
+    await apiRequest(`/api/tickets/${selectedTicket.id}/comments/${commentId}`, { token, method: 'DELETE' })
+    setComments((rows) => rows.filter((comment) => comment.id !== commentId))
+    await loadWorkspace()
   }
 
   async function createArticle(event) {
@@ -307,8 +315,14 @@ function App() {
 
   async function askAi() {
     if (!aiMessage.trim()) return
-    const data = await apiRequest('/api/ai/chat', { token, method: 'POST', body: { message: aiMessage } })
-    setAiReply(data.reply)
+    setError('')
+    setAiReply('')
+    try {
+      const data = await apiRequest('/api/ai/chat', { token, method: 'POST', body: { message: aiMessage } })
+      setAiReply(data.reply)
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   if (!token) {
@@ -375,7 +389,7 @@ function App() {
                   <p className="description">{selectedTicket.description || 'No description provided.'}</p>
                   <div className="meta-grid"><div><span>Priority</span><strong>{selectedTicket.priority}</strong></div><div><span>Category</span><strong>{selectedTicket.category || 'General'}</strong></div><div><span>Customer</span><strong>{selectedCustomer?.name || 'Unassigned'}</strong></div></div>
                   <div className="status-row">{statuses.map((status) => <button key={status} className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>{formatLabel(status)}</button>)}</div>
-                  <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className="comment-row"><p>{comment.body}</p></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
+                  <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className="comment-row with-action"><p>{comment.body}</p><button className="danger-button ghost-danger" onClick={() => deleteComment(comment.id)}>Delete</button></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
                   <form className="inline-form" onSubmit={addComment}><input name="comment" placeholder="Add comment..." /><button type="submit">Add</button></form>
                 </>
               ) : <EmptyState title="Select a ticket" text="Details will appear here." />}
@@ -413,7 +427,7 @@ function App() {
 
         {activeView === 'Services' && (
           <section className="grid-main-side">
-            <div className="card"><div className="card-head"><h2>Services</h2><span>{services.length}</span></div><div className="table-list">{services.map((service) => <div key={service.id} className="resource-row"><div><strong>{service.name}</strong><span>Department #{service.departmentId || 'n/a'} / Service</span></div></div>)}</div></div>
+            <div className="card"><div className="card-head"><h2>Services</h2><span>{services.length}</span></div><div className="table-list">{services.map((service) => <div key={service.id} className="resource-row with-action"><div><strong>{service.name}</strong><span>Department #{service.departmentId || 'n/a'} / Service</span></div><button className="danger-button ghost-danger" onClick={() => deleteResource('services', service.id)}>Delete</button></div>)}</div></div>
             <div className="side-stack"><form className="card side-card" onSubmit={createService}><h2>Add service</h2><input placeholder="Service name" value={newService.name} onChange={(event) => setNewService({ ...newService, name: event.target.value })} /><input placeholder="Department ID" value={newService.departmentId} onChange={(event) => setNewService({ ...newService, departmentId: event.target.value })} /><button type="submit">Create</button></form></div>
           </section>
         )}
