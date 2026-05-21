@@ -72,6 +72,22 @@ function safeUser(user) {
   return rest;
 }
 
+function profileData(user) {
+  return user?.data && typeof user.data === 'object' && !Array.isArray(user.data) ? user.data : {};
+}
+
+function sanitizeProfilePayload(body) {
+  const payload = {};
+  const data = {};
+
+  if (body.name !== undefined) payload.name = String(body.name).trim();
+  if (body.email !== undefined) payload.email = normalizeEmail(body.email);
+  if (body.department !== undefined) data.department = String(body.department).trim();
+  if (body.avatar !== undefined) data.avatar = String(body.avatar || '');
+
+  return { payload, data };
+}
+
 function notFound(res) {
   return res.status(404).json({ message: 'Resource not found' });
 }
@@ -298,6 +314,28 @@ function createApp(store) {
   app.get('/api/auth/me', asyncRoute(async (req, res) => {
     const user = await store.users.findById(req.user.id, tenantId(req));
     return user ? res.json(safeUser(user)) : notFound(res);
+  }));
+
+  app.patch('/api/auth/me', asyncRoute(async (req, res) => {
+    const user = await store.users.findById(req.user.id, tenantId(req));
+    if (!user) return notFound(res);
+
+    const { payload, data } = sanitizeProfilePayload(req.body || {});
+    if (payload.email) {
+      const existing = (await store.users.list({ filters: { email: payload.email } }))
+        .find((row) => row.id !== user.id);
+      if (existing) throw new BadRequestError('Email already exists');
+    }
+
+    const updated = await store.users.update(user.id, {
+      ...payload,
+      data: {
+        ...profileData(user),
+        ...data,
+      },
+    }, tenantId(req));
+
+    return updated ? res.json(safeUser(updated)) : notFound(res);
   }));
 
   app.get('/api/tenants/current', asyncRoute(async (req, res) => {

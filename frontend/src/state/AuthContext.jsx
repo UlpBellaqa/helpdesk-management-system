@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AuthContext } from './authStore.js'
 import { apiRequest } from '../api.js'
 
@@ -25,13 +25,37 @@ export function AuthProvider({ children }) {
     return data
   }, [])
 
+  const updateUser = useCallback((user) => {
+    localStorage.setItem('helpdesk_user', JSON.stringify(user))
+    setSession((current) => ({ ...current, user }))
+  }, [])
+
   const logout = useCallback(() => {
     localStorage.removeItem('helpdesk_token')
     localStorage.removeItem('helpdesk_user')
     setSession({ token: '', user: null })
   }, [])
 
-  const value = useMemo(() => ({ ...session, login, logout }), [login, logout, session])
+  useEffect(() => {
+    if (!session.token) return
+    let active = true
+
+    async function refreshUser() {
+      try {
+        const user = await apiRequest('/api/auth/me', { token: session.token })
+        if (active) updateUser(user)
+      } catch {
+        if (active) logout()
+      }
+    }
+
+    refreshUser()
+    return () => {
+      active = false
+    }
+  }, [logout, session.token, updateUser])
+
+  const value = useMemo(() => ({ ...session, login, logout, updateUser }), [login, logout, session, updateUser])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

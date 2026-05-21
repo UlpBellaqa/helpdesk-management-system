@@ -59,6 +59,36 @@ test('undocumented resource endpoints are not exposed', async () => {
   });
 });
 
+test('current user profile can be updated', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await login(baseUrl);
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${admin.token}` };
+
+    const update = await fetch(`${baseUrl}/api/auth/me`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        name: 'Admin Profile',
+        email: 'admin-profile@demo.com',
+        department: 'Support Operations',
+        avatar: 'data:image/jpeg;base64,abc123',
+        role: 'customer',
+      }),
+    });
+    const updated = await update.json();
+    assert.equal(update.status, 200);
+    assert.equal(updated.name, 'Admin Profile');
+    assert.equal(updated.email, 'admin-profile@demo.com');
+    assert.equal(updated.role, 'admin');
+    assert.equal(updated.data.department, 'Support Operations');
+    assert.equal(updated.data.avatar, 'data:image/jpeg;base64,abc123');
+
+    const me = await fetch(`${baseUrl}/api/auth/me`, { headers });
+    const currentUser = await me.json();
+    assert.equal(currentUser.data.avatar, 'data:image/jpeg;base64,abc123');
+  });
+});
+
 test('ticket comments and status updates create history', async () => {
   await withServer(async (baseUrl) => {
     const admin = await login(baseUrl);

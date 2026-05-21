@@ -564,7 +564,14 @@
 .profile-photo-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+}
+
+.save-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
 }
 
 .settings-form-grid,
@@ -676,6 +683,12 @@ textarea {
   padding: 0 11px;
   background: var(--background);
   color: var(--foreground);
+}
+
+input:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.85;
 }
 
 textarea {

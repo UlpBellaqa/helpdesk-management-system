@@ -3,6 +3,7 @@ const endpointDocs = [
   { method: 'post', path: '/api/auth/register', summary: 'Register user', auth: false, body: { email: 'student@example.com', password: 'student123', name: 'Student User', companyName: 'Student Helpdesk' } },
   { method: 'post', path: '/api/auth/login', summary: 'Login user', auth: false, body: { email: 'admin@demo.com', password: 'admin123' } },
   { method: 'get', path: '/api/auth/me', summary: 'Current authenticated user' },
+  { method: 'patch', path: '/api/auth/me', summary: 'Update current authenticated user profile', body: { name: 'Admin User', email: 'admin@demo.com', department: 'Support Operations', avatar: 'data:image/jpeg;base64,...' } },
   { method: 'get', path: '/api/tenants/current', summary: 'Current tenant/company profile' },
   { method: 'get', path: '/api/dashboard/summary', summary: 'Dashboard metrics' },
   { method: 'get', path: '/api/search', summary: 'Search tickets, customers, and articles', query: { q: 'laptop' } },

@@ -36,6 +36,17 @@ function readStoredTheme() {
   return localStorage.getItem('helpdesk-theme') === 'dark'
 }
 
+function userProfileSettings(user, fallback = {}) {
+  const data = user?.data && typeof user.data === 'object' && !Array.isArray(user.data) ? user.data : {}
+  return {
+    name: user?.name || fallback.name || '',
+    email: user?.email || fallback.email || '',
+    role: user?.role || fallback.role || '',
+    department: data.department || fallback.department || 'Support Operations',
+    avatar: data.avatar || fallback.avatar || '',
+  }
+}
+
 function resizeAvatar(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -76,13 +87,14 @@ function SearchResultSummary({ result }) {
 }
 
 function App() {
-  const { token, user, login, logout } = useAuth()
+  const { token, user, login, logout, updateUser } = useAuth()
   const [activeView, setActiveView] = useState('Overview')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [darkMode, setDarkMode] = useState(readStoredTheme)
   const [settingsTab, setSettingsTab] = useState('Profile')
-  const [profileSettings, setProfileSettings] = useState(() => readStoredJson('helpdesk-profile-settings', { name: '', email: '', role: '', department: 'Support Operations', avatar: '' }))
+  const [profileSettings, setProfileSettings] = useState(() => userProfileSettings(user, readStoredJson('helpdesk-profile-settings', {})))
+  const [profileSaveStatus, setProfileSaveStatus] = useState('')
   const [preferenceSettings, setPreferenceSettings] = useState(() => readStoredJson('helpdesk-preference-settings', { defaultPriority: 'Medium', defaultCategory: 'Software', startPage: 'Overview', compactMode: false }))
   const [notificationSettings, setNotificationSettings] = useState(() => readStoredJson('helpdesk-notification-settings', { emailAlerts: true, highPriorityAlerts: true, dailySummary: false }))
   const [dashboard, setDashboard] = useState(null)
@@ -369,6 +381,28 @@ function App() {
     }
   }
 
+  async function saveProfileSettings() {
+    setError('')
+    setProfileSaveStatus('Saving...')
+    try {
+      const updated = await apiRequest('/api/auth/me', {
+        token,
+        method: 'PATCH',
+        body: {
+          name: profileSettings.name,
+          email: profileSettings.email,
+          department: profileSettings.department,
+          avatar: profileSettings.avatar,
+        },
+      })
+      updateUser(updated)
+      setProfileSaveStatus('Saved')
+    } catch (requestError) {
+      setProfileSaveStatus('')
+      handleRequestError(requestError)
+    }
+  }
+
   if (!token) {
     return (
       <main className={`login-page ${darkMode ? 'theme-dark' : ''}`}>
@@ -515,11 +549,13 @@ function App() {
                       <input type="file" accept="image/*" onChange={uploadProfilePhoto} />
                     </label>
                     {profileSettings.avatar && <button className="secondary-button" type="button" onClick={() => setProfileSettings({ ...profileSettings, avatar: '' })}>Remove photo</button>}
+                    <button type="button" onClick={saveProfileSettings}>Save profile</button>
+                    {profileSaveStatus && <span className="save-status">{profileSaveStatus}</span>}
                   </div>
                   <div className="settings-form-grid">
                     <label>Full name<input value={profileSettings.name || user.name || ''} onChange={(event) => setProfileSettings({ ...profileSettings, name: event.target.value })} /></label>
                     <label>Email<input value={profileSettings.email || user.email || ''} onChange={(event) => setProfileSettings({ ...profileSettings, email: event.target.value })} /></label>
-                    <label>Role<input value={profileSettings.role || user.role || ''} onChange={(event) => setProfileSettings({ ...profileSettings, role: event.target.value })} /></label>
+                    <label>Role<input value={profileSettings.role || user.role || ''} disabled /></label>
                     <label>Department<input value={profileSettings.department} onChange={(event) => setProfileSettings({ ...profileSettings, department: event.target.value })} /></label>
                   </div>
                 </div>
