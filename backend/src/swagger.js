@@ -38,10 +38,38 @@ function responseFor(method) {
 function buildSwaggerSpec(port = 4000) {
   const paths = {};
 
-  endpointDocs.forEach(({ method, path, summary }) => {
+  endpointDocs.forEach(({ method, path, summary, auth, params, query, body }) => {
     paths[path] = paths[path] || {};
     paths[path][method] = {
       summary,
+      ...(auth === false ? { security: [] } : {}),
+      parameters: [
+        ...Object.entries(params || {}).map(([name, example]) => ({
+          name,
+          in: 'path',
+          required: true,
+          schema: { type: 'string', example },
+        })),
+        ...Object.entries(query || {}).map(([name, example]) => ({
+          name,
+          in: 'query',
+          required: false,
+          schema: { type: 'string', example },
+        })),
+      ],
+      ...(body ? {
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                example: body,
+              },
+            },
+          },
+        },
+      } : {}),
       responses: responseFor(method),
     };
   });
@@ -103,36 +131,25 @@ function swaggerHtml() {
     label { display: grid; gap: 5px; color: var(--muted); font-weight: 650; }
     .url-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
     pre { min-height: 76px; max-height: 360px; overflow: auto; margin: 0; border-radius: 8px; padding: 12px; background: #18181b; color: #fafafa; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
-    .auth { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: end; max-width: 900px; }
     .status { color: var(--muted); font-weight: 700; }
-    @media (max-width: 760px) { .auth, .grid, .url-row, summary { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) { .grid, .url-row, summary { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <header>
-    <div><h1>Helpdesk API</h1><p>27 endpoint-e praktike. Vendose token-in ose kliko login, pastaj provo request-et me string/JSON.</p></div>
-    <div class="auth">
-      <label>Bearer token<input id="token" placeholder="Login fills this automatically" /></label>
-      <button id="login">Login demo</button>
-      <button class="secondary" id="clear">Clear</button>
-    </div>
+    <div><h1>Helpdesk API</h1><p>27 endpoint-e praktike. Hape endpoint-in, ndrysho fushat dhe kliko Send.</p></div>
   </header>
   <main id="app"></main>
   <script>
     const endpoints = ${JSON.stringify(endpointDocs)};
     const app = document.getElementById('app');
-    const tokenInput = document.getElementById('token');
-    tokenInput.value = localStorage.getItem('helpdesk_api_token') || '';
-    tokenInput.addEventListener('input', () => localStorage.setItem('helpdesk_api_token', tokenInput.value));
-    document.getElementById('clear').onclick = () => { tokenInput.value = ''; localStorage.removeItem('helpdesk_api_token'); };
+    let apiToken = '';
     async function loginDemo() {
       const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin@demo.com', password: 'admin123' }) });
       const data = await res.json();
-      tokenInput.value = data.token || '';
-      localStorage.setItem('helpdesk_api_token', tokenInput.value);
-      return tokenInput.value;
+      apiToken = data.token || '';
+      return apiToken;
     }
-    document.getElementById('login').onclick = loginDemo;
 
     function pretty(value) { return JSON.stringify(value, null, 2); }
     function pathWithValues(endpoint, root) {
@@ -173,7 +190,7 @@ function swaggerHtml() {
       updateUrl();
       root.querySelector('[data-send]').onclick = async () => {
         status.textContent = 'sending';
-        if (endpoint.auth !== false && !tokenInput.value) {
+        if (endpoint.auth !== false) {
           status.textContent = 'logging in';
           await loginDemo();
         }
@@ -185,9 +202,15 @@ function swaggerHtml() {
         }
         const headers = {};
         if (body !== undefined) headers['Content-Type'] = 'application/json';
-        if (endpoint.auth !== false && tokenInput.value) headers.Authorization = 'Bearer ' + tokenInput.value;
+        if (endpoint.auth !== false && apiToken) headers.Authorization = 'Bearer ' + apiToken;
         try {
-          const res = await fetch(pathWithValues(endpoint, root), { method: endpoint.method.toUpperCase(), headers, body: body === undefined ? undefined : JSON.stringify(body) });
+          let res = await fetch(pathWithValues(endpoint, root), { method: endpoint.method.toUpperCase(), headers, body: body === undefined ? undefined : JSON.stringify(body) });
+          if (res.status === 401 && endpoint.auth !== false) {
+            apiToken = '';
+            status.textContent = 'logging in';
+            headers.Authorization = 'Bearer ' + await loginDemo();
+            res = await fetch(pathWithValues(endpoint, root), { method: endpoint.method.toUpperCase(), headers, body: body === undefined ? undefined : JSON.stringify(body) });
+          }
           const text = await res.text();
           status.textContent = res.status + ' ' + res.statusText;
           responseBox.textContent = text ? pretty(JSON.parse(text)) : '{ "ok": true }';

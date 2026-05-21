@@ -15,6 +15,15 @@ dotenv.config();
 const PORT = process.env.PORT || 4000;
 const TOKEN_SECRET = process.env.TOKEN_SECRET || 'dev-secret';
 const TOKEN_EXPIRY = process.env.TOKEN_EXPIRY || '8h';
+const allowedOrigins = new Set([
+  'http://localhost:4000',
+  'http://127.0.0.1:4000',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+]);
 const adminResources = new Set(['users', 'roles', 'permissions', 'tenants']);
 const documentedResourceRoutes = {
   tickets: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
@@ -177,7 +186,10 @@ function createApp(store) {
 
   app.use(helmet());
   app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked origin: ${origin}`));
+    },
     credentials: true,
   }));
   app.use(express.json({ limit: '10mb' }));
@@ -205,7 +217,11 @@ function createApp(store) {
   app.get('/', (req, res) => res.redirect('/api-docs'));
   app.get('/health', (req, res) => res.json({ status: 'ok', service: 'helpdesk-api' }));
   app.get('/api-docs.json', (req, res) => res.json(buildSwaggerSpec(PORT)));
-  app.get('/api-docs', (req, res) => res.type('html').send(swaggerHtml()));
+  app.get('/api-docs', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.set('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:");
+    res.type('html').send(swaggerHtml());
+  });
 
   const signToken = (payload) => authMiddleware.signToken(payload);
 

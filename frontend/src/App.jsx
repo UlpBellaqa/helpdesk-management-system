@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
-import { API_BASE_URL, apiRequest } from './api.js'
+import { API_BASE_URL, ApiRequestError, apiRequest } from './api.js'
 import { useAuth } from './state/useAuth.js'
 
 const statuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed']
@@ -135,6 +135,15 @@ function App() {
     await Promise.all([loadWorkspace(), reloadTickets()])
   }
 
+  const handleRequestError = useCallback((requestError) => {
+    if (requestError instanceof ApiRequestError && requestError.status === 401) {
+      logout()
+      setError('Session expired. Please sign in again.')
+      return
+    }
+    setError(requestError.message)
+  }, [logout])
+
   useEffect(() => {
     if (!token) return
     let active = true
@@ -146,7 +155,7 @@ function App() {
         setTickets(rows)
         setSelectedTicket((current) => rows.find((ticket) => ticket.id === current?.id) || rows[0] || null)
       } catch (requestError) {
-        if (active) setError(requestError.message)
+        if (active) handleRequestError(requestError)
       }
     }
 
@@ -154,7 +163,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [ticketSearch, token])
+  }, [handleRequestError, ticketSearch, token])
 
   useEffect(() => {
     if (!token) return
@@ -164,7 +173,7 @@ function App() {
       try {
         await loadWorkspace()
       } catch (requestError) {
-        if (active) setError(requestError.message)
+        if (active) handleRequestError(requestError)
       }
     }
 
@@ -172,7 +181,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [loadWorkspace, token])
+  }, [handleRequestError, loadWorkspace, token])
 
   useEffect(() => {
     if (!token || !selectedTicket) return
@@ -183,7 +192,7 @@ function App() {
         const rows = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token })
         if (active) setComments(rows)
       } catch (requestError) {
-        if (active) setError(requestError.message)
+        if (active) handleRequestError(requestError)
       }
     }
 
@@ -191,7 +200,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [selectedTicket, token])
+  }, [handleRequestError, selectedTicket, token])
 
   async function submitLogin(event) {
     event.preventDefault()
@@ -206,25 +215,29 @@ function App() {
   async function createTicket(event) {
     event.preventDefault()
     if (!newTicket.title.trim()) return
-    const ticket = await apiRequest('/api/tickets', {
-      token,
-      method: 'POST',
-      body: {
-        title: newTicket.title,
-        description: newTicket.description,
-        priority: newTicket.priority,
-        category: newTicket.category,
-        status: 'open',
-        customer: {
-          name: newTicket.customerName,
-          email: newTicket.customerEmail,
-          company: newTicket.customerCompany,
+    try {
+      const ticket = await apiRequest('/api/tickets', {
+        token,
+        method: 'POST',
+        body: {
+          title: newTicket.title,
+          description: newTicket.description,
+          priority: newTicket.priority,
+          category: newTicket.category,
+          status: 'open',
+          customer: {
+            name: newTicket.customerName,
+            email: newTicket.customerEmail,
+            company: newTicket.customerCompany,
+          },
         },
-      },
-    })
-    setNewTicket({ title: '', description: '', priority: 'Medium', category: 'Software', customerName: '', customerEmail: '', customerCompany: '' })
-    setSelectedTicket(ticket)
-    await refreshWorkspace()
+      })
+      setNewTicket({ title: '', description: '', priority: 'Medium', category: 'Software', customerName: '', customerEmail: '', customerCompany: '' })
+      setSelectedTicket(ticket)
+      await refreshWorkspace()
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   async function updateStatus(status) {
