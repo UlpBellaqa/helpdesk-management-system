@@ -119,6 +119,47 @@ test('ticket comments and status updates create history', async () => {
   });
 });
 
+test('ticket attachments can be uploaded, listed, and deleted', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await login(baseUrl);
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${admin.token}` };
+
+    const upload = await fetch(`${baseUrl}/api/tickets/1/attachments`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        fileName: 'error-log.txt',
+        type: 'text/plain',
+        size: 12,
+        url: 'data:text/plain;base64,SGVsbG8gd29ybGQ=',
+      }),
+    });
+    const attachment = await upload.json();
+    assert.equal(upload.status, 201);
+    assert.equal(attachment.fileName, 'error-log.txt');
+    assert.equal(attachment.data.size, 12);
+
+    const list = await fetch(`${baseUrl}/api/tickets/1/attachments`, { headers });
+    const rows = await list.json();
+    assert.equal(list.status, 200);
+    assert.ok(rows.some((row) => row.id === attachment.id));
+
+    const histories = await fetch(`${baseUrl}/api/histories`, { headers });
+    const historyRows = await histories.json();
+    assert.ok(historyRows.some((row) => row.action === 'attachment_added'));
+
+    const remove = await fetch(`${baseUrl}/api/tickets/1/attachments/${attachment.id}`, {
+      method: 'DELETE',
+      headers,
+    });
+    assert.equal(remove.status, 204);
+
+    const afterDelete = await fetch(`${baseUrl}/api/tickets/1/attachments`, { headers });
+    const remaining = await afterDelete.json();
+    assert.equal(remaining.some((row) => row.id === attachment.id), false);
+  });
+});
+
 test('ticket creation creates or reuses customer by email', async () => {
   await withServer(async (baseUrl) => {
     const admin = await login(baseUrl);

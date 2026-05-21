@@ -7,9 +7,16 @@ import { useAuth } from './state/useAuth.js'
 
 const statuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed']
 const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'Services', 'Automation', 'Activity', 'Settings', 'Admin']
+const maxAttachmentBytes = 5 * 1024 * 1024
 
 function formatLabel(value) {
   return String(value || 'unassigned').replaceAll('_', ' ')
+}
+
+function formatBytes(bytes = 0) {
+  if (!bytes) return '0 KB'
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function initials(name = 'HD') {
@@ -73,6 +80,15 @@ function resizeAvatar(file) {
   })
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`))
+    reader.readAsDataURL(file)
+  })
+}
+
 function SearchResultSummary({ result }) {
   if (!result) return null
   return (
@@ -107,6 +123,8 @@ function App() {
   const [users, setUsers] = useState([])
   const [selectedTicket, setSelectedTicket] = useState(null)
   const [comments, setComments] = useState([])
+  const [attachments, setAttachments] = useState([])
+  const [attachmentStatus, setAttachmentStatus] = useState('')
   const [ticketSearch, setTicketSearch] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
   const [searchResult, setSearchResult] = useState(null)
@@ -227,8 +245,14 @@ function App() {
 
     async function loadComments() {
       try {
-        const rows = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token })
-        if (active) setComments(rows)
+        const [commentRows, attachmentRows] = await Promise.all([
+          apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token }),
+          apiRequest(`/api/tickets/${selectedTicket.id}/attachments`, { token }),
+        ])
+        if (active) {
+          setComments(commentRows)
+          setAttachments(attachmentRows)
+        }
       } catch (requestError) {
         if (active) handleRequestError(requestError)
       }
@@ -300,6 +324,7 @@ function App() {
     await apiRequest(`/api/tickets/${ticketId}`, { token, method: 'DELETE' })
     setSelectedTicket(null)
     setComments([])
+    setAttachments([])
     await refreshWorkspace()
   }
 
@@ -313,6 +338,51 @@ function App() {
     if (!selectedTicket || !window.confirm('Delete this comment?')) return
     await apiRequest(`/api/tickets/${selectedTicket.id}/comments/${commentId}`, { token, method: 'DELETE' })
     setComments((rows) => rows.filter((comment) => comment.id !== commentId))
+    await loadWorkspace()
+  }
+
+  async function uploadTicketAttachments(event) {
+    const files = Array.from(event.target.files || [])
+    event.target.value = ''
+    if (!files.length || !selectedTicket) return
+
+    const oversized = files.find((file) => file.size > maxAttachmentBytes)
+    if (oversized) {
+      setError(`${oversized.name} is too large. Attachments must be 5MB or smaller.`)
+      return
+    }
+
+    setError('')
+    setAttachmentStatus(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}...`)
+    try {
+      const created = []
+      for (const file of files) {
+        const url = await readFileAsDataUrl(file)
+        const attachment = await apiRequest(`/api/tickets/${selectedTicket.id}/attachments`, {
+          token,
+          method: 'POST',
+          body: {
+            fileName: file.name,
+            type: file.type || 'application/octet-stream',
+            size: file.size,
+            url,
+          },
+        })
+        created.push(attachment)
+      }
+      setAttachments((rows) => [...rows, ...created])
+      setAttachmentStatus('Uploaded')
+      await loadWorkspace()
+    } catch (requestError) {
+      setAttachmentStatus('')
+      handleRequestError(requestError)
+    }
+  }
+
+  async function deleteAttachment(attachmentId) {
+    if (!selectedTicket || !window.confirm('Delete this attachment?')) return
+    await apiRequest(`/api/tickets/${selectedTicket.id}/attachments/${attachmentId}`, { token, method: 'DELETE' })
+    setAttachments((rows) => rows.filter((attachment) => attachment.id !== attachmentId))
     await loadWorkspace()
   }
 
@@ -467,6 +537,30 @@ function App() {
                   <p className="description">{selectedTicket.description || 'No description provided.'}</p>
                   <div className="meta-grid"><div><span>Priority</span><strong>{selectedTicket.priority}</strong></div><div><span>Category</span><strong>{selectedTicket.category || 'General'}</strong></div><div><span>Customer</span><strong>{selectedCustomer?.name || 'Unassigned'}</strong></div></div>
                   <div className="status-row">{statuses.map((status) => <button key={status} className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>{formatLabel(status)}</button>)}</div>
+                  <div className="attachments">
+                    <div className="section-head">
+                      <h3>Attachments</h3>
+                      <label className="upload-button compact-upload">
+                        Upload
+                        <input type="file" multiple onChange={uploadTicketAttachments} />
+                      </label>
+                    </div>
+                    {attachments.map((attachment) => (
+                      <div key={attachment.id} className="attachment-row">
+                        <div>
+                          <strong>{attachment.fileName}</strong>
+                          <span>{formatBytes(attachment.data?.size)} / {attachment.data?.type || 'file'}</span>
+                        </div>
+                        <div className="attachment-actions">
+                          <a className="button-link" href={attachment.url} target="_blank" rel="noreferrer">Open</a>
+                          <a className="button-link" href={attachment.url} download={attachment.fileName}>Download</a>
+                          <button className="danger-button ghost-danger" onClick={() => deleteAttachment(attachment.id)}>Delete</button>
+                        </div>
+                      </div>
+                    ))}
+                    {!attachments.length && <EmptyState title="No attachments" text="Upload screenshots, logs, invoices, or any file needed to resolve this ticket." />}
+                    {attachmentStatus && <span className="save-status">{attachmentStatus}</span>}
+                  </div>
                   <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className="comment-row with-action"><p>{comment.body}</p><button className="danger-button ghost-danger" onClick={() => deleteComment(comment.id)}>Delete</button></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
                   <form className="inline-form" onSubmit={addComment}><input name="comment" placeholder="Add comment..." /><button type="submit">Add</button></form>
                 </>

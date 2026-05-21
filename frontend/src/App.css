@@ -84,7 +84,9 @@
 .inline-form,
 .status-row,
 .detail-actions,
-.article-head {
+.article-head,
+.section-head,
+.attachment-actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -310,6 +312,7 @@
 .table-list,
 .article-list,
 .comments,
+.attachments,
 .timeline,
 .form-section,
 .status-list,
@@ -453,6 +456,7 @@
 .comments p,
 .table-row,
 .resource-row,
+.attachment-row,
 .article-list article,
 .timeline div,
 .setting-row {
@@ -513,6 +517,45 @@
 
 .resource-row .danger-button {
   justify-self: end;
+}
+
+.section-head {
+  justify-content: space-between;
+}
+
+.attachment-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.attachment-row > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.attachment-row strong,
+.attachment-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-row span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.attachment-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.compact-upload {
+  min-height: 30px;
+  padding: 0 9px;
 }
 
 .article-list article,
@@ -806,24 +849,29 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .grid-two,
-  .grid-main-side,
-  .tickets-layout,
-  .meta-grid,
-  .settings-form-grid,
-  .settings-info-grid,
-  .table-row,
-  .table-row.two-col,
-  .table-row.with-action,
-  .resource-row,
-  .comment-row,
-  .status-row,
-  .setting-row {
+.grid-two,
+.grid-main-side,
+.tickets-layout,
+.meta-grid,
+.settings-form-grid,
+.settings-info-grid,
+.table-row,
+.table-row.two-col,
+.table-row.with-action,
+.resource-row,
+.attachment-row,
+.comment-row,
+.status-row,
+.setting-row {
     grid-template-columns: 1fr;
   }
 
   .resource-row .danger-button {
     justify-self: start;
+  }
+
+  .attachment-actions {
+    justify-content: flex-start;
   }
 
   .ticket-list {
@@ -966,6 +1014,7 @@ body {
 .table-list,
 .article-list,
 .comments,
+.attachments,
 .timeline,
 .form-section,
 .status-list,
@@ -999,6 +1048,7 @@ body {
 .comments p,
 .table-row,
 .resource-row,
+.attachment-row,
 .article-list article,
 .timeline div,
 .setting-row,

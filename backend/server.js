@@ -26,13 +26,14 @@ const allowedOrigins = new Set([
 ]);
 const adminResources = new Set(['users', 'roles', 'permissions', 'tenants']);
 const documentedResourceRoutes = {
-  tickets: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
+  tickets: new Set(['getList', 'postList', 'getItem', 'putItem']),
   customers: new Set(['getList', 'postList', 'getItem', 'putItem', 'deleteItem']),
   articles: new Set(['getList', 'postList']),
   services: new Set(['getList', 'postList', 'deleteItem']),
   jobs: new Set(['getList']),
   histories: new Set(['getList']),
 };
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 
 async function hashPassword(password) {
   return bcrypt.hash(password || '', 10);
@@ -134,6 +135,28 @@ function sanitizeTicketPayload(payload, customerId) {
     ...ticketPayload,
     ...(customerId ? { customerId } : {}),
   };
+}
+
+function dataUrlByteSize(url) {
+  const value = String(url || '');
+  const commaIndex = value.indexOf(',');
+  if (!value.startsWith('data:') || commaIndex < 0) return 0;
+  const base64 = value.slice(commaIndex + 1);
+  return Math.floor((base64.length * 3) / 4);
+}
+
+function sanitizeAttachmentPayload(body) {
+  const fileName = String(body.fileName || '').trim();
+  const url = String(body.url || '');
+  const size = Number(body.size || dataUrlByteSize(url));
+  const type = String(body.type || '').trim();
+
+  if (!fileName) throw new BadRequestError('File name is required');
+  if (!url.startsWith('data:')) throw new BadRequestError('Attachment file data is required');
+  if (!Number.isFinite(size) || size <= 0) throw new BadRequestError('Attachment size is invalid');
+  if (size > MAX_ATTACHMENT_BYTES) throw new BadRequestError('Attachment must be 5MB or smaller');
+
+  return { fileName, url, size, type };
 }
 
 function formatLabel(value) {
@@ -431,6 +454,44 @@ function createApp(store) {
     return comment ? res.status(201).json(comment) : notFound(res);
   }));
 
+  app.get('/api/tickets/:id/attachments', asyncRoute(async (req, res) => {
+    const ticket = await store.tickets.findById(req.params.id, tenantId(req));
+    if (!ticket) return notFound(res);
+    return res.json(await store.attachments.list({ tenantId: tenantId(req), filters: { ticketId: ticket.id } }));
+  }));
+
+  app.post('/api/tickets/:id/attachments', asyncRoute(async (req, res) => {
+    const ticket = await store.tickets.findById(req.params.id, tenantId(req));
+    if (!ticket) return notFound(res);
+
+    const attachment = sanitizeAttachmentPayload(req.body || {});
+    const created = await store.attachments.create({
+      tenantId: tenantId(req),
+      ticketId: ticket.id,
+      fileName: attachment.fileName,
+      url: attachment.url,
+      data: {
+        size: attachment.size,
+        type: attachment.type,
+        uploadedBy: req.user.id,
+      },
+    });
+    await store.histories.create({ tenantId: tenantId(req), ticketId: ticket.id, action: 'attachment_added', actorId: req.user.id });
+    return res.status(201).json(created);
+  }));
+
+  app.delete('/api/tickets/:ticketId/attachments/:attachmentId', asyncRoute(async (req, res) => {
+    const ticket = await store.tickets.findById(req.params.ticketId, tenantId(req));
+    if (!ticket) return notFound(res);
+
+    const attachment = await store.attachments.findById(req.params.attachmentId, tenantId(req));
+    if (!attachment || attachment.ticketId !== ticket.id) return notFound(res);
+
+    await store.attachments.delete(attachment.id, tenantId(req));
+    await store.histories.create({ tenantId: tenantId(req), ticketId: ticket.id, action: 'attachment_deleted', actorId: req.user.id });
+    return res.status(204).send();
+  }));
+
   app.delete('/api/tickets/:ticketId/comments/:commentId', asyncRoute(async (req, res) => {
     const ticket = await store.tickets.findById(req.params.ticketId, tenantId(req));
     if (!ticket) return notFound(res);
@@ -446,6 +507,24 @@ function createApp(store) {
       actorId: req.user.id,
       commentId: comment.id,
     });
+    return res.status(204).send();
+  }));
+
+  app.delete('/api/tickets/:id', asyncRoute(async (req, res) => {
+    const ticket = await store.tickets.findById(req.params.id, tenantId(req));
+    if (!ticket) return notFound(res);
+
+    const childOptions = { tenantId: tenantId(req), filters: { ticketId: ticket.id } };
+    const [attachments, comments, histories] = await Promise.all([
+      store.attachments.list(childOptions),
+      store.comments.list(childOptions),
+      store.histories.list(childOptions),
+    ]);
+
+    await Promise.all(attachments.map((attachment) => store.attachments.delete(attachment.id, tenantId(req))));
+    await Promise.all(comments.map((comment) => store.comments.delete(comment.id, tenantId(req))));
+    await Promise.all(histories.map((history) => store.histories.delete(history.id, tenantId(req))));
+    await store.tickets.delete(ticket.id, tenantId(req));
     return res.status(204).send();
   }));
 
