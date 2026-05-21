@@ -169,6 +169,31 @@ async function buildLocalAiReply(store, tenantIdValue, prompt) {
   return lines.join('\n');
 }
 
+async function buildAiContext(store, tenantIdValue) {
+  const [summary, tickets, customers, articles] = await Promise.all([
+    store.dashboardSummary(tenantIdValue),
+    store.tickets.list({ tenantId: tenantIdValue }),
+    store.customers.list({ tenantId: tenantIdValue }),
+    store.articles.list({ tenantId: tenantIdValue }),
+  ]);
+
+  return {
+    summary,
+    tickets: tickets.map(({ id, title, description, status, priority, category, customerId, assigneeId }) => ({
+      id,
+      title,
+      description,
+      status,
+      priority,
+      category,
+      customerId,
+      assigneeId,
+    })),
+    customers: customers.map(({ id, name, email, company }) => ({ id, name, email, company })),
+    articles: articles.map(({ id, title, body, category, published }) => ({ id, title, body, category, published })),
+  };
+}
+
 function createApp(store) {
   const app = express();
   const resourceMap = Object.fromEntries(resourceConfigs.map((config) => [config.route, store[config.property]]));
@@ -301,27 +326,40 @@ function createApp(store) {
 
   app.post('/api/ai/chat', asyncRoute(async (req, res) => {
     const prompt = req.body.message || '';
-    let reply = await buildLocalAiReply(store, tenantId(req), prompt);
 
-    if (process.env.OPENAI_API_KEY) {
-      try {
-        const context = await buildLocalAiReply(store, tenantId(req), prompt);
-        const response = await fetch('https://api.openai.com/v1/responses', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
-            input: `You are a concise helpdesk operations assistant. Use this local context and answer the user request.\n\n${context}\n\nUser request: ${prompt}`,
-          }),
-        });
-        const data = await response.json();
-        reply = data.output_text || data.output?.[0]?.content?.[0]?.text || reply;
-      } catch (error) {
-        console.error('OpenAI request failed, using local analysis fallback:', error.message);
-      }
+    if (!process.env.OPENAI_API_KEY) {
+      throw new ApiError(503, 'OpenAI API key is not configured');
+    }
+
+    const context = await buildAiContext(store, tenantId(req));
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+        input: [
+          'You are a helpful AI assistant inside a helpdesk management system.',
+          'Answer the user directly. If the question is about tickets, customers, articles, queue status, priorities, or support work, use the JSON context below.',
+          'If the user asks a general question, answer normally and briefly.',
+          '',
+          `Helpdesk context JSON:\n${JSON.stringify(context, null, 2)}`,
+          '',
+          `User question: ${prompt}`,
+        ].join('\n'),
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new ApiError(response.status, data.error?.message || 'OpenAI request failed');
+    }
+
+    const reply = data.output_text || data.output?.[0]?.content?.[0]?.text;
+    if (!reply) {
+      throw new ApiError(502, 'OpenAI returned an empty response');
     }
 
     const conversation = await store.aiConversations.create({ tenantId: tenantId(req), prompt, reply });
