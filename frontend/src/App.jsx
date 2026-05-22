@@ -7,6 +7,15 @@ import { useAuth } from './state/useAuth.js'
 
 const statuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed']
 const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'Automation', 'Activity', 'Settings']
+const navIcons = {
+  Overview: 'overview',
+  Tickets: 'tickets',
+  Customers: 'customers',
+  Knowledge: 'knowledge',
+  Automation: 'automation',
+  Activity: 'activity',
+  Settings: 'settings',
+}
 const maxAttachmentBytes = 5 * 1024 * 1024
 const defaultPreferenceSettings = { defaultPriority: 'Medium', defaultCategory: 'Software', startPage: 'Overview', compactMode: false }
 const defaultNotificationSettings = { emailAlerts: true, highPriorityAlerts: true, dailySummary: false }
@@ -604,7 +613,7 @@ function App() {
         <nav className="main-nav">
           {visibleNavItems.map((item) => (
             <button key={item} className={activeView === item ? 'active' : ''} onClick={() => { setActiveView(item); if (item === 'Settings') setSettingsTab('Profile') }}>
-              {item === 'Settings' && <span className="nav-icon settings-mark" aria-hidden="true" />}
+              <span className={`nav-icon nav-icon-${navIcons[item]}`} aria-hidden="true" />
               {item}
             </button>
           ))}
