@@ -6,12 +6,13 @@ import { API_BASE_URL, ApiRequestError, apiRequest } from './api.js'
 import { useAuth } from './state/useAuth.js'
 
 const statuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed']
-const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'Automation', 'Activity', 'Settings']
+const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'AI Assistant', 'Automation', 'Activity', 'Settings']
 const navIcons = {
   Overview: 'overview',
   Tickets: 'tickets',
   Customers: 'customers',
   Knowledge: 'knowledge',
+  'AI Assistant': 'automation',
   Automation: 'automation',
   Activity: 'activity',
   Settings: 'settings',
@@ -37,6 +38,20 @@ function initials(name = 'HD') {
 function ticketReference(ticket) {
   const raw = String(ticket?.id || '').replace(/[^a-z0-9]/gi, '').toUpperCase()
   return `HD-${raw.slice(-6) || 'NEW'}`
+}
+
+function historyTicketReference(history) {
+  return ticketReference({ id: history?.ticketId })
+}
+
+function formatDateTime(value) {
+  if (!value) return 'No date'
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
 }
 
 function EmptyState({ title, text }) {
@@ -148,6 +163,7 @@ function App() {
   const [ticketSearch, setTicketSearch] = useState('')
   const [ticketFilter, setTicketFilter] = useState('active')
   const [commentMode, setCommentMode] = useState('public')
+  const [historyFilter, setHistoryFilter] = useState('all')
   const [knowledgeSearch, setKnowledgeSearch] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
   const [searchResult, setSearchResult] = useState(null)
@@ -159,10 +175,7 @@ function App() {
   const [newArticle, setNewArticle] = useState({ title: '', body: '', category: 'General', published: true, global: false })
   const [editingArticleId, setEditingArticleId] = useState('')
 
-  const visibleNavItems = useMemo(() => {
-    if (user?.role === 'customer') return navItems.filter((item) => !['Automation'].includes(item))
-    return navItems
-  }, [user])
+  const visibleNavItems = useMemo(() => navItems, [])
 
   const openTickets = tickets.filter((ticket) => !['resolved', 'closed'].includes(ticket.status))
   const highPriorityTickets = tickets.filter((ticket) => ticket.priority === 'High')
@@ -188,6 +201,18 @@ function App() {
     if (ticketFilter === 'all') return true
     if (ticketFilter === 'active') return !['resolved', 'closed'].includes(ticket.status)
     return ticket.status === ticketFilter
+  })
+  const historyFilterOptions = [
+    { key: 'all', label: 'All', count: histories.length },
+    { key: 'created', label: 'Created', count: histories.filter((history) => history.action === 'created').length },
+    { key: 'commented', label: 'Comments', count: histories.filter((history) => history.action === 'commented').length },
+    { key: 'status_changed', label: 'Status', count: histories.filter((history) => history.action === 'status_changed').length },
+    { key: 'attachment_added', label: 'Files', count: histories.filter((history) => String(history.action || '').startsWith('attachment')).length },
+  ]
+  const filteredHistories = histories.filter((history) => {
+    if (historyFilter === 'all') return true
+    if (historyFilter === 'attachment_added') return String(history.action || '').startsWith('attachment')
+    return history.action === historyFilter
   })
 
   useEffect(() => {
@@ -357,9 +382,13 @@ function App() {
 
   async function updateStatus(status) {
     if (!selectedTicket) return
-    const ticket = await apiRequest(`/api/tickets/${selectedTicket.id}/status`, { token, method: 'PATCH', body: { status } })
-    setSelectedTicket(ticket)
-    await refreshWorkspace()
+    try {
+      const ticket = await apiRequest(`/api/tickets/${selectedTicket.id}/status`, { token, method: 'PATCH', body: { status } })
+      setSelectedTicket(ticket)
+      await refreshWorkspace()
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   async function addComment(event) {
@@ -663,12 +692,12 @@ function App() {
                   <div className="detail-head"><div><span>{ticketReference(selectedTicket)}</span><h2>{selectedTicket.title}</h2></div><div className="detail-actions"><strong>{formatLabel(selectedTicket.status)}</strong><button className="danger-button" onClick={() => deleteTicket(selectedTicket.id)}>Delete</button></div></div>
                   <p className="description">{selectedTicket.description || 'No description provided.'}</p>
                   <div className="meta-grid"><div><span>Priority</span><strong>{selectedTicket.priority}</strong></div><div><span>Category</span><strong>{selectedTicket.category || 'General'}</strong></div><div><span>Customer</span><strong>{selectedCustomer?.name || 'Unassigned'}</strong></div></div>
-                  <div className="status-row">{statuses.map((status) => <button key={status} className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>{formatLabel(status)}</button>)}</div>
+                  <div className="status-row">{statuses.map((status) => <button key={status} type="button" className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>{formatLabel(status)}</button>)}</div>
                   <div className="attachments">
                     <div className="section-head">
                       <h3>Attachments</h3>
-                      <label className="upload-button compact-upload">
-                        Upload
+                      <label className="upload-button attach-button">
+                        Attach
                         <input type="file" multiple onChange={uploadTicketAttachments} />
                       </label>
                     </div>
@@ -759,15 +788,39 @@ function App() {
         )}
 
         {activeView === 'Automation' && (
-          <section className="grid-two">
+          <section>
             <form className="card" onSubmit={searchAll}><div className="card-head"><h2>Global Search</h2>{searchResult && <span>{searchResult.cached ? 'Cached' : 'Fresh'}</span>}</div><div className="inline-form"><input placeholder="Search tickets, customers, articles..." value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} /><button type="submit">Search</button></div><SearchResultSummary result={searchResult} /></form>
-            <div className="card"><div className="card-head"><h2>AI assistant</h2></div><textarea placeholder="Ask about ticket priority, customer follow-up, queue risks..." value={aiMessage} onChange={(event) => setAiMessage(event.target.value)} /><button onClick={askAi}>Ask assistant</button>{aiReply && <div className="assistant-reply">{aiReply}</div>}</div>
+          </section>
+        )}
+
+        {activeView === 'AI Assistant' && (
+          <section className="assistant-page">
+            <div className="card ai-assistant-card"><div className="card-head"><h2>AI assistant</h2></div><textarea placeholder="Ask about ticket priority, customer follow-up, queue risks..." value={aiMessage} onChange={(event) => setAiMessage(event.target.value)} /><button onClick={askAi}>Ask assistant</button>{aiReply && <div className="assistant-reply">{aiReply}</div>}</div>
           </section>
         )}
 
         {activeView === 'Activity' && (
           <section className="activity-page">
-            <div className="card"><div className="card-head"><h2>Ticket history</h2><span>{histories.length}</span></div><div className="timeline">{histories.map((history) => <div key={history.id}><strong>{formatLabel(history.action)}</strong><span>Ticket #{history.ticketId}</span></div>)}</div></div>
+            <div className="card">
+              <div className="card-head"><h2>Ticket history</h2><span>{filteredHistories.length}</span></div>
+              <div className="history-filters">
+                {historyFilterOptions.map((option) => <button key={option.key} className={historyFilter === option.key ? 'active' : ''} onClick={() => setHistoryFilter(option.key)}>{option.label}<span>{option.count}</span></button>)}
+              </div>
+              <div className="timeline">
+                {filteredHistories.map((history) => (
+                  <div key={history.id}>
+                    <div className="timeline-dot" aria-hidden="true" />
+                    <div>
+                      <strong>{formatLabel(history.action)}</strong>
+                      <span>{historyTicketReference(history)} / {formatDateTime(history.createdAt)}</span>
+                    </div>
+                    {history.action === 'status_changed' && <small>{formatLabel(history.fromStatus)} to {formatLabel(history.toStatus)}</small>}
+                    {history.commentId && <small>Comment #{history.commentId}</small>}
+                  </div>
+                ))}
+                {!filteredHistories.length && <EmptyState title="No activity found" text="Try another activity filter." />}
+              </div>
+            </div>
           </section>
         )}
 
@@ -791,12 +844,12 @@ function App() {
                     </div>
                   </div>
                   <div className="profile-photo-actions">
-                    <label className="upload-button">
-                      Upload photo
+                    <label className="upload-button profile-action photo-action">
+                      Choose photo
                       <input type="file" accept="image/*" onChange={uploadProfilePhoto} />
                     </label>
-                    {profileSettings.avatar && <button className="secondary-button" type="button" onClick={() => setProfileSettings({ ...profileSettings, avatar: '' })}>Remove photo</button>}
-                    <button type="button" onClick={saveProfileSettings}>Save profile</button>
+                    {profileSettings.avatar && <button className="secondary-button profile-action" type="button" onClick={() => setProfileSettings({ ...profileSettings, avatar: '' })}>Remove</button>}
+                    <button className="profile-action save-profile-action" type="button" onClick={saveProfileSettings}>Save</button>
                     {profileSaveStatus && <span className="save-status">{profileSaveStatus}</span>}
                   </div>
                   <div className="settings-form-grid">

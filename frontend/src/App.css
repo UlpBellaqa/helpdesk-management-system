@@ -601,6 +601,14 @@
   white-space: pre-wrap;
 }
 
+.assistant-page {
+  max-width: 760px;
+}
+
+.ai-assistant-card textarea {
+  min-height: 150px;
+}
+
 .result-summary {
   display: grid;
   gap: 8px;
@@ -861,9 +869,29 @@
   justify-content: flex-end;
 }
 
-.compact-upload {
-  min-height: 30px;
-  padding: 0 9px;
+.upload-button.attach-button {
+  gap: 5px;
+  min-height: 26px;
+  padding: 0 8px;
+  border-color: var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.upload-button.attach-button::before {
+  content: '+';
+  display: grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--card-muted);
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1;
 }
 
 .article-list article,
@@ -871,6 +899,46 @@
 .setting-row {
   display: grid;
   gap: 7px;
+}
+
+.timeline {
+  position: relative;
+}
+
+.timeline > div:not(.empty-state) {
+  position: relative;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.timeline > div:not(.empty-state)::before {
+  content: '';
+  position: absolute;
+  left: 17px;
+  top: 34px;
+  bottom: -18px;
+  width: 1px;
+  background: var(--border);
+}
+
+.timeline > div:not(.empty-state):last-child::before {
+  display: none;
+}
+
+.timeline-dot {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--primary);
+  border-radius: 999px;
+  background: var(--card);
+}
+
+.timeline small {
+  justify-self: end;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 650;
 }
 
 .article-head {
@@ -951,11 +1019,62 @@
   font-weight: 800;
 }
 
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card-muted);
+}
+
+.history-filters button {
+  min-height: 30px;
+  gap: 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.history-filters button.active,
+.history-filters button:hover {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.history-filters span {
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 .profile-photo-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.profile-action,
+.upload-button.profile-action {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.photo-action {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.save-profile-action {
+  border-color: var(--foreground);
+  background: var(--foreground);
+  color: var(--background);
 }
 
 .save-status {
