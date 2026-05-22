@@ -25,6 +25,11 @@ function initials(name = 'HD') {
   return name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()
 }
 
+function ticketReference(ticket) {
+  const raw = String(ticket?.id || '').replace(/[^a-z0-9]/gi, '').toUpperCase()
+  return `HD-${raw.slice(-6) || 'NEW'}`
+}
+
 function EmptyState({ title, text }) {
   return (
     <div className="empty-state">
@@ -132,6 +137,8 @@ function App() {
   const [attachments, setAttachments] = useState([])
   const [attachmentStatus, setAttachmentStatus] = useState('')
   const [ticketSearch, setTicketSearch] = useState('')
+  const [ticketFilter, setTicketFilter] = useState('active')
+  const [commentMode, setCommentMode] = useState('public')
   const [knowledgeSearch, setKnowledgeSearch] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
   const [searchResult, setSearchResult] = useState(null)
@@ -154,12 +161,25 @@ function App() {
   const statusEntries = Object.entries(dashboard?.byStatus || {})
   const unreadNotifications = notifications.filter((notification) => notification.status !== 'read')
   const canPublishGlobalKnowledge = user?.role === 'admin'
+  const canAddInternalNotes = ['admin', 'agent'].includes(user?.role)
   const visibleArticles = articles
     .filter((article) => {
       const query = knowledgeSearch.trim().toLowerCase()
       if (!query) return true
       return [article.title, article.body, article.category].some((value) => String(value || '').toLowerCase().includes(query))
     })
+  const ticketFilterOptions = [
+    { key: 'active', label: 'Active', count: tickets.filter((ticket) => !['resolved', 'closed'].includes(ticket.status)).length },
+    { key: 'waiting_customer', label: 'Waiting', count: tickets.filter((ticket) => ticket.status === 'waiting_customer').length },
+    { key: 'resolved', label: 'Resolved', count: tickets.filter((ticket) => ticket.status === 'resolved').length },
+    { key: 'closed', label: 'Closed', count: tickets.filter((ticket) => ticket.status === 'closed').length },
+    { key: 'all', label: 'All', count: tickets.length },
+  ]
+  const filteredTickets = tickets.filter((ticket) => {
+    if (ticketFilter === 'all') return true
+    if (ticketFilter === 'active') return !['resolved', 'closed'].includes(ticket.status)
+    return ticket.status === ticketFilter
+  })
 
   useEffect(() => {
     localStorage.setItem('helpdesk-theme', darkMode ? 'dark' : 'light')
@@ -338,7 +358,8 @@ function App() {
     const form = event.currentTarget
     const body = form.elements.comment.value.trim()
     if (!body || !selectedTicket) return
-    const comment = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token, method: 'POST', body: { body } })
+    const internal = canAddInternalNotes && commentMode === 'internal'
+    const comment = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token, method: 'POST', body: { body, internal } })
     form.reset()
     setComments((rows) => [...rows, comment])
   }
@@ -611,7 +632,7 @@ function App() {
             </section>
             <section className="grid-two">
               <div className="card"><div className="card-head"><h2>Ticket status</h2></div><div className="status-list">{statusEntries.map(([status, count]) => <div key={status}><span>{formatLabel(status)}</span><strong>{count}</strong></div>)} {!statusEntries.length && <EmptyState title="No queue activity" text="Ticket status data will appear here when work begins." />}</div></div>
-              <div className="card"><div className="card-head"><h2>Recent tickets</h2></div><div className="stack-list">{(dashboard?.recentTickets || tickets.slice(0, 5)).map((ticket) => <button key={ticket.id} onClick={() => { setSelectedTicket(ticket); setActiveView('Tickets') }}><strong>{ticket.title}</strong><span>{formatLabel(ticket.status)} / {ticket.priority}</span></button>)}</div></div>
+              <div className="card"><div className="card-head"><h2>Recent tickets</h2></div><div className="stack-list">{(dashboard?.recentTickets || tickets.slice(0, 5)).map((ticket) => <button key={ticket.id} onClick={() => { setSelectedTicket(ticket); setActiveView('Tickets') }}><strong>{ticket.title}</strong><span>{ticketReference(ticket)} / {formatLabel(ticket.status)} / {ticket.priority}</span></button>)}</div></div>
             </section>
           </>
         )}
@@ -619,15 +640,18 @@ function App() {
         {activeView === 'Tickets' && (
           <section className="tickets-layout">
             <div className="card list-card">
-              <div className="card-head"><h2>Queue</h2><span>{tickets.length}</span></div>
+              <div className="card-head"><h2>Queue</h2><span>{filteredTickets.length}</span></div>
+              <div className="ticket-filters">
+                {ticketFilterOptions.map((option) => <button key={option.key} className={ticketFilter === option.key ? 'active' : ''} onClick={() => setTicketFilter(option.key)}>{option.label}<span>{option.count}</span></button>)}
+              </div>
               <input placeholder="Search tickets" value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} />
-              <div className="ticket-list">{tickets.map((ticket) => <button key={ticket.id} className={ticket.id === selectedTicket?.id ? 'selected' : ''} onClick={() => setSelectedTicket(ticket)}><strong>{ticket.title}</strong><span>{ticket.priority} / {formatLabel(ticket.status)}</span></button>)} {!tickets.length && <EmptyState title="Queue is empty" text="New support requests will appear here." />}</div>
+              <div className="ticket-list">{filteredTickets.map((ticket) => <button key={ticket.id} className={ticket.id === selectedTicket?.id ? 'selected' : ''} onClick={() => setSelectedTicket(ticket)}><strong>{ticket.title}</strong><span>{ticketReference(ticket)} / {ticket.priority} / {formatLabel(ticket.status)}</span></button>)} {!filteredTickets.length && <EmptyState title="No tickets here" text="Try another queue filter or create a new support ticket." />}</div>
             </div>
 
             <div className="card detail-card">
               {selectedTicket ? (
                 <>
-                  <div className="detail-head"><div><span>Ticket #{selectedTicket.id}</span><h2>{selectedTicket.title}</h2></div><div className="detail-actions"><strong>{formatLabel(selectedTicket.status)}</strong><button className="danger-button" onClick={() => deleteTicket(selectedTicket.id)}>Delete</button></div></div>
+                  <div className="detail-head"><div><span>{ticketReference(selectedTicket)}</span><h2>{selectedTicket.title}</h2></div><div className="detail-actions"><strong>{formatLabel(selectedTicket.status)}</strong><button className="danger-button" onClick={() => deleteTicket(selectedTicket.id)}>Delete</button></div></div>
                   <p className="description">{selectedTicket.description || 'No description provided.'}</p>
                   <div className="meta-grid"><div><span>Priority</span><strong>{selectedTicket.priority}</strong></div><div><span>Category</span><strong>{selectedTicket.category || 'General'}</strong></div><div><span>Customer</span><strong>{selectedCustomer?.name || 'Unassigned'}</strong></div></div>
                   <div className="status-row">{statuses.map((status) => <button key={status} className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>{formatLabel(status)}</button>)}</div>
@@ -655,8 +679,17 @@ function App() {
                     {!attachments.length && <EmptyState title="No attachments" text="Upload screenshots, logs, invoices, or any file needed to resolve this ticket." />}
                     {attachmentStatus && <span className="save-status">{attachmentStatus}</span>}
                   </div>
-                  <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className="comment-row with-action"><p>{comment.body}</p><button className="danger-button ghost-danger" onClick={() => deleteComment(comment.id)}>Delete</button></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
-                  <form className="inline-form" onSubmit={addComment}><input name="comment" placeholder="Add comment..." /><button type="submit">Add</button></form>
+                  <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className={`comment-row with-action ${comment.internal ? 'internal-note' : ''}`}><p>{comment.body}</p><div className="comment-actions">{comment.internal && <span>Internal note</span>}<button className="danger-button ghost-danger" onClick={() => deleteComment(comment.id)}>Delete</button></div></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
+                  <form className="comment-form" onSubmit={addComment}>
+                    {canAddInternalNotes && (
+                      <div className="comment-mode">
+                        <button type="button" className={commentMode === 'public' ? 'active' : ''} onClick={() => setCommentMode('public')}>Public reply</button>
+                        <button type="button" className={commentMode === 'internal' ? 'active' : ''} onClick={() => setCommentMode('internal')}>Internal note</button>
+                      </div>
+                    )}
+                    <input name="comment" placeholder={canAddInternalNotes ? 'Add reply or internal note...' : 'Add reply...'} />
+                    <button type="submit">{commentMode === 'internal' && canAddInternalNotes ? 'Add internal note' : 'Add public reply'}</button>
+                  </form>
                 </>
               ) : <EmptyState title="Select a ticket" text="Details will appear here." />}
             </div>

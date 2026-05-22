@@ -521,13 +521,15 @@ function createApp(store) {
   app.get('/api/tickets/:id/comments', asyncRoute(async (req, res) => {
     const ticket = await store.tickets.findById(req.params.id, tenantId(req));
     if (!ticket) return notFound(res);
-    return res.json(await store.comments.list({ tenantId: tenantId(req), filters: { ticketId: ticket.id } }));
+    const rows = await store.comments.list({ tenantId: tenantId(req), filters: { ticketId: ticket.id } });
+    if (['admin', 'agent'].includes(req.user.role)) return res.json(rows);
+    return res.json(rows.filter((comment) => !comment.internal));
   }));
 
   app.post('/api/tickets/:id/comments', asyncRoute(async (req, res) => {
     const comment = await store.addTicketComment(req.params.id, {
       body: req.body.body,
-      internal: req.body.internal,
+      internal: ['admin', 'agent'].includes(req.user.role) && Boolean(req.body.internal),
       authorId: req.user.id,
     }, tenantId(req));
     if (comment) await createNotification(store, tenantId(req), 'comment_added', { ticketId: comment.ticketId, commentId: comment.id }, req.user.id);

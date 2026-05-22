@@ -217,6 +217,15 @@ test('ticket comments and status updates create history', async () => {
     });
     assert.equal(comment.status, 201);
 
+    const internal = await fetch(`${baseUrl}/api/tickets/1/comments`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ body: 'Staff-only troubleshooting note.', internal: true }),
+    });
+    const internalBody = await internal.json();
+    assert.equal(internal.status, 201);
+    assert.equal(internalBody.internal, true);
+
     const status = await fetch(`${baseUrl}/api/tickets/1/status`, {
       method: 'PATCH',
       headers,
@@ -227,11 +236,47 @@ test('ticket comments and status updates create history', async () => {
     const comments = await fetch(`${baseUrl}/api/tickets/1/comments`, { headers });
     const commentRows = await comments.json();
     assert.ok(commentRows.some((row) => row.body === 'Customer confirmed the adapter works.'));
+    assert.ok(commentRows.some((row) => row.body === 'Staff-only troubleshooting note.' && row.internal === true));
 
     const histories = await fetch(`${baseUrl}/api/histories`, { headers });
     const historyRows = await histories.json();
     assert.ok(historyRows.some((row) => row.action === 'commented'));
     assert.ok(historyRows.some((row) => row.action === 'status_changed'));
+  });
+});
+
+test('customers cannot mark their ticket replies as internal notes', async () => {
+  await withServer(async (baseUrl) => {
+    const register = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyName: 'Customer Notes',
+        name: 'Customer Notes User',
+        email: `customer-notes-${Date.now()}@example.com`,
+        password: 'secret123',
+      }),
+    });
+    const customer = await register.json();
+    assert.equal(register.status, 201);
+
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${customer.token}` };
+    const ticketResponse = await fetch(`${baseUrl}/api/tickets`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ title: 'Customer visible ticket', status: 'open', priority: 'Medium' }),
+    });
+    const ticket = await ticketResponse.json();
+    assert.equal(ticketResponse.status, 201);
+
+    const commentResponse = await fetch(`${baseUrl}/api/tickets/${ticket.id}/comments`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ body: 'This should stay public.', internal: true }),
+    });
+    const comment = await commentResponse.json();
+    assert.equal(commentResponse.status, 201);
+    assert.equal(comment.internal, false);
   });
 });
 
