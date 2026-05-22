@@ -79,6 +79,37 @@ test('current user profile can be updated', async () => {
   });
 });
 
+test('registered users can sign in again with the same email after normalization', async () => {
+  await withServer(async (baseUrl) => {
+    const email = `New.User.${Date.now()}@Example.COM`;
+    const password = 'secret123';
+
+    const register = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyName: 'Signup Persistence',
+        name: 'New User',
+        email,
+        password,
+      }),
+    });
+    const registered = await register.json();
+    assert.equal(register.status, 201);
+    assert.equal(registered.user.email, email.toLowerCase());
+
+    const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.toLowerCase(), password }),
+    });
+    const loginBody = await loginResponse.json();
+    assert.equal(loginResponse.status, 200);
+    assert.equal(loginBody.user.email, email.toLowerCase());
+    assert.ok(loginBody.token);
+  });
+});
+
 test('ticket comments and status updates create history', async () => {
   await withServer(async (baseUrl) => {
     const admin = await login(baseUrl);

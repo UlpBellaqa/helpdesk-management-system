@@ -73,7 +73,9 @@ function safeUser(user) {
 }
 
 async function ensureUniqueEmail(store, email, currentUserId) {
-  const existing = (await store.users.list({ filters: { email } }))
+  const normalizedEmail = normalizeEmail(email);
+  const existing = (await store.users.list())
+    .filter((row) => normalizeEmail(row.email) === normalizedEmail)
     .find((row) => row.id !== currentUserId);
   if (existing) throw new BadRequestError('Email already exists');
 }
@@ -323,11 +325,12 @@ function createApp(store) {
       throw new BadRequestError(validationError);
     }
 
-    const exists = (await store.users.list({ filters: { email: req.body.email } }))[0];
+    const email = normalizeEmail(req.body.email);
+    const exists = (await store.users.list()).find((row) => normalizeEmail(row.email) === email);
     if (exists) throw new BadRequestError('Email already exists');
 
     const tenant = await store.tenants.create({ 
-      name: req.body.companyName, 
+      name: String(req.body.companyName || '').trim(), 
       slug: req.body.companySlug || `tenant-${Date.now()}` 
     });
     if (!tenant) throw new BadRequestError('Tenant could not be created');
@@ -338,8 +341,8 @@ function createApp(store) {
 
     const user = await store.users.create({
       tenantId: tenant.id,
-      name: req.body.name,
-      email: req.body.email,
+      name: String(req.body.name || '').trim(),
+      email,
       password: hashedPassword,
       role,
     });
@@ -353,8 +356,8 @@ function createApp(store) {
       throw new BadRequestError(validationError);
     }
 
-    const users = await store.users.list({ filters: { email: req.body.email } });
-    const user = users[0];
+    const email = normalizeEmail(req.body.email);
+    const user = (await store.users.list()).find((row) => normalizeEmail(row.email) === email);
     if (!user || !(await verifyPassword(req.body.password, user.password))) {
       throw new UnauthorizedError('Invalid credentials');
     }
