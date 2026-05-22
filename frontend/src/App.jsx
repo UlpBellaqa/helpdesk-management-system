@@ -134,6 +134,7 @@ function App() {
   const [attachments, setAttachments] = useState([])
   const [attachmentStatus, setAttachmentStatus] = useState('')
   const [ticketSearch, setTicketSearch] = useState('')
+  const [knowledgeSearch, setKnowledgeSearch] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
   const [searchResult, setSearchResult] = useState(null)
   const [aiMessage, setAiMessage] = useState('')
@@ -141,7 +142,7 @@ function App() {
   const [error, setError] = useState('')
   const [authNotice, setAuthNotice] = useState('')
   const [newTicket, setNewTicket] = useState({ title: '', description: '', priority: 'Medium', category: 'Software', customerName: '', customerEmail: '', customerCompany: '' })
-  const [newArticle, setNewArticle] = useState({ title: '', body: '', category: 'General', published: true })
+  const [newArticle, setNewArticle] = useState({ title: '', body: '', category: 'General', published: true, global: false })
   const [newService, setNewService] = useState({ name: '', departmentId: '' })
   const [newJob, setNewJob] = useState({ type: 'email', payload: '{"reason":"manual follow-up"}' })
 
@@ -155,6 +156,13 @@ function App() {
   const selectedCustomer = customers.find((customer) => customer.id === selectedTicket?.customerId)
   const statusEntries = Object.entries(dashboard?.byStatus || {})
   const unreadNotifications = notifications.filter((notification) => notification.status !== 'read')
+  const canPublishGlobalKnowledge = user?.role === 'admin'
+  const visibleArticles = articles
+    .filter((article) => {
+      const query = knowledgeSearch.trim().toLowerCase()
+      if (!query) return true
+      return [article.title, article.body, article.category].some((value) => String(value || '').toLowerCase().includes(query))
+    })
 
   useEffect(() => {
     localStorage.setItem('helpdesk-theme', darkMode ? 'dark' : 'light')
@@ -166,6 +174,7 @@ function App() {
       setProfileSettings(userProfileSettings(user, readStoredJson(userStorageKey(user, 'profile'), {})))
       setPreferenceSettings(readStoredJson(userStorageKey(user, 'preference'), defaultPreferenceSettings))
       setNotificationSettings(readStoredJson(userStorageKey(user, 'notification'), defaultNotificationSettings))
+      setNewArticle((article) => ({ ...article, global: user.role === 'admin' }))
       setProfileSaveStatus('')
     }, 0)
     return () => window.clearTimeout(timeout)
@@ -444,8 +453,14 @@ function App() {
     event.preventDefault()
     if (!newArticle.title.trim() || !newArticle.body.trim()) return
     await apiRequest('/api/articles', { token, method: 'POST', body: newArticle })
-    setNewArticle({ title: '', body: '', category: 'General', published: true })
+    setNewArticle({ title: '', body: '', category: 'General', published: true, global: user?.role === 'admin' })
     await loadWorkspace()
+  }
+
+  async function deleteArticle(articleId) {
+    if (!window.confirm('Delete this knowledge article?')) return
+    await apiRequest(`/api/articles/${articleId}`, { token, method: 'DELETE' })
+    setArticles((rows) => rows.filter((article) => article.id !== articleId))
   }
 
   async function createService(event) {
@@ -678,8 +693,30 @@ function App() {
 
         {activeView === 'Knowledge' && (
           <section className="grid-main-side">
-            <div className="card"><div className="card-head"><h2>Knowledge base</h2><span>{articles.length}</span></div><div className="article-list">{articles.map((article) => <article key={article.id}><div className="article-head"><span>{article.category}</span></div><h3>{article.title}</h3><p>{article.body}</p></article>)}</div></div>
-            <form className="card side-card" onSubmit={createArticle}><h2>New article</h2><input placeholder="Title" value={newArticle.title} onChange={(event) => setNewArticle({ ...newArticle, title: event.target.value })} /><input placeholder="Category" value={newArticle.category} onChange={(event) => setNewArticle({ ...newArticle, category: event.target.value })} /><textarea placeholder="Body" value={newArticle.body} onChange={(event) => setNewArticle({ ...newArticle, body: event.target.value })} /><button type="submit">Publish</button></form>
+            <div className="card">
+              <div className="card-head"><h2>Knowledge base</h2><span>{visibleArticles.length}</span></div>
+              <input placeholder="Search help articles" value={knowledgeSearch} onChange={(event) => setKnowledgeSearch(event.target.value)} />
+              <div className="article-list">
+                {visibleArticles.map((article) => (
+                  <article key={article.id}>
+                    <div className="article-head"><span>{article.category}</span><span>{article.data?.scope === 'global' ? 'All accounts' : 'Internal'} / {article.published ? 'Published' : 'Draft'}</span></div>
+                    <h3>{article.title}</h3>
+                    <p>{article.body}</p>
+                    <button className="danger-button ghost-danger" type="button" onClick={() => deleteArticle(article.id)}>Delete</button>
+                  </article>
+                ))}
+                {!visibleArticles.length && <EmptyState title="No articles found" text="Publish a knowledge article to save repeat answers for this account." />}
+              </div>
+            </div>
+            <form className="card side-card" onSubmit={createArticle}>
+              <h2>New article</h2>
+              <input placeholder="Title" value={newArticle.title} onChange={(event) => setNewArticle({ ...newArticle, title: event.target.value })} />
+              <input placeholder="Category" value={newArticle.category} onChange={(event) => setNewArticle({ ...newArticle, category: event.target.value })} />
+              <textarea placeholder="Body" value={newArticle.body} onChange={(event) => setNewArticle({ ...newArticle, body: event.target.value })} />
+              <label className="setting-row"><span><strong>Published</strong><small>Visible in this account's Knowledge page.</small></span><input type="checkbox" checked={newArticle.published} onChange={(event) => setNewArticle({ ...newArticle, published: event.target.checked })} /></label>
+              {canPublishGlobalKnowledge && <label className="setting-row"><span><strong>All accounts</strong><small>Admin article visible in every account.</small></span><input type="checkbox" checked={newArticle.global} onChange={(event) => setNewArticle({ ...newArticle, global: event.target.checked })} /></label>}
+              <button type="submit">Publish</button>
+            </form>
           </section>
         )}
 

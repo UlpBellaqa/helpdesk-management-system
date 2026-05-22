@@ -244,6 +244,10 @@
   grid-template-columns: minmax(0, 1fr) 330px;
 }
 
+.single-panel {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .tickets-layout {
   grid-template-columns: 310px minmax(430px, 1fr) 310px;
 }

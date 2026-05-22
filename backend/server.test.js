@@ -110,6 +110,85 @@ test('registered users can sign in again with the same email after normalization
   });
 });
 
+test('knowledge articles can be internal or admin global', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await login(baseUrl);
+    const adminHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${admin.token}` };
+
+    const globalArticle = await fetch(`${baseUrl}/api/articles`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ title: 'Global reset guide', body: 'Visible to every account', category: 'General', published: true, global: true }),
+    });
+    assert.equal(globalArticle.status, 201);
+
+    const registerFirst = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyName: 'Knowledge Customer',
+        name: 'Knowledge Reader',
+        email: `knowledge-reader-${Date.now()}@example.com`,
+        password: 'secret123',
+      }),
+    });
+    const firstCustomer = await registerFirst.json();
+    assert.equal(registerFirst.status, 201);
+
+    const firstHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${firstCustomer.token}` };
+    const internalArticle = await fetch(`${baseUrl}/api/articles`, {
+      method: 'POST',
+      headers: firstHeaders,
+      body: JSON.stringify({ title: 'Internal customer guide', body: 'Only this account', category: 'General', published: true }),
+    });
+    const internalArticleBody = await internalArticle.json();
+    assert.equal(internalArticle.status, 201);
+
+    const firstList = await fetch(`${baseUrl}/api/articles`, { headers: firstHeaders });
+    const firstRows = await firstList.json();
+    assert.equal(firstList.status, 200);
+    assert.ok(firstRows.some((article) => article.title === 'Global reset guide'));
+    assert.ok(firstRows.some((article) => article.title === 'Internal customer guide'));
+
+    const adminList = await fetch(`${baseUrl}/api/articles`, { headers: adminHeaders });
+    const adminRows = await adminList.json();
+    assert.ok(adminRows.some((article) => article.title === 'Global reset guide'));
+    assert.equal(adminRows.some((article) => article.title === 'Internal customer guide'), false);
+
+    const adminDeleteInternal = await fetch(`${baseUrl}/api/articles/${internalArticleBody.id}`, {
+      method: 'DELETE',
+      headers: adminHeaders,
+    });
+    assert.equal(adminDeleteInternal.status, 403);
+
+    const ownerDeleteInternal = await fetch(`${baseUrl}/api/articles/${internalArticleBody.id}`, {
+      method: 'DELETE',
+      headers: firstHeaders,
+    });
+    assert.equal(ownerDeleteInternal.status, 204);
+
+    const registerSecond = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyName: 'Other Knowledge Customer',
+        name: 'Other Reader',
+        email: `other-knowledge-reader-${Date.now()}@example.com`,
+        password: 'secret123',
+      }),
+    });
+    const secondCustomer = await registerSecond.json();
+    assert.equal(registerSecond.status, 201);
+
+    const secondList = await fetch(`${baseUrl}/api/articles`, {
+      headers: { Authorization: `Bearer ${secondCustomer.token}` },
+    });
+    const secondRows = await secondList.json();
+    assert.ok(secondRows.some((article) => article.title === 'Global reset guide'));
+    assert.equal(secondRows.some((article) => article.title === 'Internal customer guide'), false);
+  });
+});
+
 test('ticket comments and status updates create history', async () => {
   await withServer(async (baseUrl) => {
     const admin = await login(baseUrl);

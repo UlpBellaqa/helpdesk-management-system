@@ -59,6 +59,21 @@ function prepareResourcePayload(req, resource) {
   return { ...req.body, tenantId: tenantId(req) };
 }
 
+function prepareArticlePayload(req) {
+  const payload = { ...req.body };
+  const global = req.user?.role === 'admin' && payload.global !== false;
+  delete payload.global;
+  return {
+    ...payload,
+    tenantId: global ? null : tenantId(req),
+    data: {
+      ...(payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data) ? payload.data : {}),
+      scope: global ? 'global' : 'workspace',
+      createdBy: req.user?.id,
+    },
+  };
+}
+
 function sanitizeUpdatePayload(req, resource) {
   if (resource === 'tenants') return req.body;
   const payload = { ...req.body };
@@ -165,6 +180,27 @@ function sanitizeTicketPayload(payload, customerId) {
     ...ticketPayload,
     ...(customerId ? { customerId } : {}),
   };
+}
+
+async function visibleKnowledgeArticles(store, req) {
+  const allArticles = await store.articles.list();
+  if (req.user?.role === 'admin') {
+    return allArticles.filter((article) => article.tenantId === tenantId(req) || article.tenantId === null);
+  }
+
+  const ownTenantArticles = await store.articles.list({ tenantId: tenantId(req) });
+  const globalArticles = (await store.articles.list()).filter((article) => article.tenantId === null && article.published);
+  const ownArticles = ownTenantArticles.filter((article) => article.published || article.data?.createdBy === req.user?.id);
+  const rows = [...ownArticles, ...globalArticles];
+  return rows.filter((article, index) => rows.findIndex((row) => row.id === article.id) === index);
+}
+
+async function canModifyKnowledgeArticle(store, req, articleId) {
+  const article = (await store.articles.list()).find((row) => row.id === articleId);
+  if (!article) return null;
+  if (article.tenantId === tenantId(req)) return article;
+  if (req.user?.role === 'admin' && article.tenantId === null) return article;
+  return false;
 }
 
 function dataUrlByteSize(url) {
@@ -585,7 +621,30 @@ function createApp(store) {
     return ticket ? res.json(ticket) : notFound(res);
   }));
 
+  app.get('/api/articles', asyncRoute(async (req, res) => {
+    const rows = await visibleKnowledgeArticles(store, req);
+    const query = String(req.query.q || '').trim().toLowerCase();
+    const filtered = query
+      ? rows.filter((article) => [article.title, article.body, article.category]
+        .some((value) => String(value || '').toLowerCase().includes(query)))
+      : rows;
+    return res.json(filtered);
+  }));
+
+  app.post('/api/articles', asyncRoute(async (req, res) => {
+    return res.status(201).json(await store.articles.create(prepareArticlePayload(req)));
+  }));
+
+  app.delete('/api/articles/:id', asyncRoute(async (req, res) => {
+    const article = await canModifyKnowledgeArticle(store, req, req.params.id);
+    if (article === null) return notFound(res);
+    if (article === false) return res.status(403).json({ message: 'You can only delete your own knowledge articles' });
+    await store.articles.delete(article.id, article.tenantId || undefined);
+    return res.status(204).send();
+  }));
+
   Object.entries(resourceMap).forEach(([resource, repo]) => {
+    if (resource === 'articles') return;
     const allowedRoutes = documentedResourceRoutes[resource];
     if (!allowedRoutes) return;
 
