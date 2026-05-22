@@ -81,6 +81,8 @@
 .login-brand,
 .sidebar-user,
 .actions,
+.auth-tabs,
+.demo-credentials,
 .inline-form,
 .status-row,
 .detail-actions,
@@ -262,6 +264,44 @@
 .login-card {
   width: min(440px, 100%);
   padding: 22px;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-muted);
+}
+
+.auth-tabs button {
+  min-height: 32px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.auth-tabs button.active,
+.auth-tabs button:hover {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.demo-credentials {
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card-muted);
+}
+
+.demo-credentials span {
+  color: var(--muted);
+  font-weight: 650;
 }
 
 .metric {

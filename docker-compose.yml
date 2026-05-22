@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: helpdesk
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: 123
     ports:
       - "5432:5432"
     volumes:

@@ -103,10 +103,12 @@ function SearchResultSummary({ result }) {
 }
 
 function App() {
-  const { token, user, login, logout, updateUser } = useAuth()
+  const { token, user, login, logout, register, updateUser } = useAuth()
   const [activeView, setActiveView] = useState('Overview')
+  const [authMode, setAuthMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [registerForm, setRegisterForm] = useState({ name: '', email: '', password: '', companyName: '' })
   const [darkMode, setDarkMode] = useState(readStoredTheme)
   const [settingsTab, setSettingsTab] = useState('Profile')
   const [profileSettings, setProfileSettings] = useState(() => userProfileSettings(user, readStoredJson('helpdesk-profile-settings', {})))
@@ -380,6 +382,16 @@ function App() {
     }
   }
 
+  async function submitRegister(event) {
+    event.preventDefault()
+    setError('')
+    try {
+      await register(registerForm)
+    } catch (requestError) {
+      setError(requestError.message)
+    }
+  }
+
   async function deleteAttachment(attachmentId) {
     if (!selectedTicket || !window.confirm('Delete this attachment?')) return
     await apiRequest(`/api/tickets/${selectedTicket.id}/attachments/${attachmentId}`, { token, method: 'DELETE' })
@@ -487,11 +499,27 @@ function App() {
   if (!token) {
     return (
       <main className={`login-page ${darkMode ? 'theme-dark' : ''}`}>
-        <form className="login-card" onSubmit={submitLogin}>
-          <div className="login-brand"><span>HD</span><div><h1>Helpdesk</h1><p>Sign in to continue.</p></div></div>
-          <label>Email<input placeholder="you@company.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-          <label>Password<input placeholder="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-          <div className="actions"><button type="submit">Sign in</button><button className="secondary-button" type="button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? 'Light' : 'Dark'}</button></div>
+        <form className="login-card" onSubmit={authMode === 'login' ? submitLogin : submitRegister}>
+          <div className="login-brand"><span>HD</span><div><h1>Helpdesk</h1><p>{authMode === 'login' ? 'Sign in to continue.' : 'Create a new workspace account.'}</p></div></div>
+          <div className="auth-tabs">
+            <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); setError('') }}>Sign in</button>
+            <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => { setAuthMode('register'); setError('') }}>Sign up</button>
+          </div>
+          {authMode === 'login' ? (
+            <>
+              <label>Email<input placeholder="admin@demo.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+              <label>Password<input placeholder="admin123" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+              <div className="demo-credentials"><span>Demo login</span><button className="button-link" type="button" onClick={() => { setEmail('admin@demo.com'); setPassword('admin123') }}>Use admin@demo.com</button></div>
+            </>
+          ) : (
+            <>
+              <label>Full name<input placeholder="Your name" value={registerForm.name} onChange={(event) => setRegisterForm({ ...registerForm, name: event.target.value })} /></label>
+              <label>Company<input placeholder="Company or workspace" value={registerForm.companyName} onChange={(event) => setRegisterForm({ ...registerForm, companyName: event.target.value })} /></label>
+              <label>Email<input placeholder="you@company.com" value={registerForm.email} onChange={(event) => setRegisterForm({ ...registerForm, email: event.target.value })} /></label>
+              <label>Password<input placeholder="At least 6 characters" type="password" value={registerForm.password} onChange={(event) => setRegisterForm({ ...registerForm, password: event.target.value })} /></label>
+            </>
+          )}
+          <div className="actions"><button type="submit">{authMode === 'login' ? 'Sign in' : 'Create account'}</button><button className="secondary-button" type="button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? 'Light' : 'Dark'}</button></div>
           {error && <p className="error">{error}</p>}
         </form>
       </main>

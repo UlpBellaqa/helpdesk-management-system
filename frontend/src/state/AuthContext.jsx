@@ -25,6 +25,17 @@ export function AuthProvider({ children }) {
     return data
   }, [])
 
+  const register = useCallback(async ({ name, email, password, companyName }) => {
+    const data = await apiRequest('/api/auth/register', {
+      method: 'POST',
+      body: { name, email, password, companyName },
+    })
+    localStorage.setItem('helpdesk_token', data.token)
+    localStorage.setItem('helpdesk_user', JSON.stringify(data.user))
+    setSession(data)
+    return data
+  }, [])
+
   const updateUser = useCallback((user) => {
     localStorage.setItem('helpdesk_user', JSON.stringify(user))
     setSession((current) => ({ ...current, user }))
@@ -55,7 +66,7 @@ export function AuthProvider({ children }) {
     }
   }, [logout, session.token, updateUser])
 
-  const value = useMemo(() => ({ ...session, login, logout, updateUser }), [login, logout, session, updateUser])
+  const value = useMemo(() => ({ ...session, login, logout, register, updateUser }), [login, logout, register, session, updateUser])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

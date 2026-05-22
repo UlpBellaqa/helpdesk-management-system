@@ -1,4 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
+const { PrismaClient, Prisma } = require('@prisma/client');
+const { PrismaPg } = require('@prisma/adapter-pg');
 const bcrypt = require('bcryptjs');
 
 const resourceConfigs = [
@@ -27,6 +28,10 @@ const resourceConfigs = [
 ];
 
 const specialFields = new Set(['id', 'tenantId', 'createdAt', 'updatedAt']);
+const prismaModels = new Map((Prisma.dmmf?.datamodel?.models || []).map((model) => [
+  model.name.charAt(0).toLowerCase() + model.name.slice(1),
+  model,
+]));
 
 function snakeCase(value) {
   return value.replace(/([A-Z])/g, '_$1').toLowerCase();
@@ -77,14 +82,42 @@ class PrismaRepository {
   constructor(prisma, model) {
     this.prisma = prisma;
     this.model = model;
+    this.modelFields = new Set((prismaModels.get(model)?.fields || [])
+      .filter((field) => field.kind === 'scalar' || field.kind === 'enum')
+      .map((field) => field.name));
+    this.searchFields = (prismaModels.get(model)?.fields || [])
+      .filter((field) => field.kind === 'scalar' && field.type === 'String')
+      .map((field) => field.name);
+  }
+
+  splitData(data, existingData = {}) {
+    const columnData = {};
+    const jsonData = {
+      ...(existingData && typeof existingData === 'object' && !Array.isArray(existingData) ? existingData : {}),
+    };
+
+    Object.entries(data || {}).forEach(([key, value]) => {
+      if (this.modelFields.has(key)) {
+        columnData[key] = value;
+      } else {
+        jsonData[key] = value;
+      }
+    });
+
+    if (Object.keys(jsonData).length > 0 && this.modelFields.has('data')) {
+      columnData.data = jsonData;
+    }
+
+    return columnData;
   }
 
   async create(data) {
     const { tenantId, ...createData } = data;
+    const safeData = this.splitData(createData);
     return this.prisma[this.model].create({
       data: {
-        ...createData,
-        ...(tenantId && { tenantId }),
+        ...safeData,
+        ...(tenantId && this.modelFields.has('tenantId') && { tenantId }),
       },
     });
   }
@@ -94,19 +127,15 @@ class PrismaRepository {
     if (tenantId) where.tenantId = tenantId;
 
     Object.entries(filters).forEach(([key, value]) => {
-      if (value !== undefined && value !== '') {
+      if (this.modelFields.has(key) && value !== undefined && value !== '') {
         where[key] = value;
       }
     });
 
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { body: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-      ].filter(condition => Object.values(condition)[0] !== undefined);
+    if (search && this.searchFields.length > 0) {
+      where.OR = this.searchFields.map((field) => ({
+        [field]: { contains: search, mode: 'insensitive' },
+      }));
     }
 
     return this.prisma[this.model].findMany({ where });
@@ -124,10 +153,11 @@ class PrismaRepository {
     
     const existing = await this.findById(id, tenantId);
     if (!existing) return null;
+    const safeData = this.splitData(updateData, existing.data);
 
     return this.prisma[this.model].update({
       where: { id },
-      data: updateData,
+      data: safeData,
     });
   }
 
@@ -208,27 +238,46 @@ class BackgroundQueue {
 }
 
 class BaseStore {
-  async seed() {
-    if ((await this.tenants.list()).length > 0) return;
+  async findOrCreate(repository, match, createData, options = {}) {
+    const rows = await repository.list(options);
+    const existing = rows.find((row) => Object.entries(match).every(([key, value]) => row[key] === value));
+    return existing || repository.create(createData);
+  }
 
-    const tenant = await this.tenants.create({ name: 'Acme Helpdesk', slug: 'acme' });
-    const adminRole = await this.roles.create({ tenantId: tenant.id, name: 'admin' });
-    const agentRole = await this.roles.create({ tenantId: tenant.id, name: 'agent' });
-    await this.permissions.create({ tenantId: tenant.id, roleId: adminRole.id, name: 'system:admin' });
-    await this.permissions.create({ tenantId: tenant.id, roleId: agentRole.id, name: 'tickets:manage' });
-    await this.users.create({ tenantId: tenant.id, name: 'Admin User', email: 'admin@demo.com', password: await hashPassword('admin123'), role: 'admin', roleId: adminRole.id });
-    const agent = await this.users.create({ tenantId: tenant.id, name: 'Agent User', email: 'agent@demo.com', password: await hashPassword('agent123'), role: 'agent', roleId: agentRole.id });
-    const department = await this.departments.create({ tenantId: tenant.id, name: 'IT Support' });
-    const team = await this.teams.create({ tenantId: tenant.id, name: 'Level 1', departmentId: department.id });
-    await this.agentProfiles.create({ tenantId: tenant.id, userId: agent.id, teamId: team.id, title: 'Support Agent', active: true });
-    await this.priorities.create({ tenantId: tenant.id, name: 'High', rank: 1, responseHours: 4 });
-    await this.priorities.create({ tenantId: tenant.id, name: 'Medium', rank: 2, responseHours: 12 });
-    await this.categories.create({ tenantId: tenant.id, name: 'Hardware' });
-    await this.categories.create({ tenantId: tenant.id, name: 'Software' });
-    const service = await this.services.create({ tenantId: tenant.id, name: 'Laptop Support', departmentId: department.id });
-    await this.slaPolicies.create({ tenantId: tenant.id, name: 'Urgent 4h', priority: 'High', responseHours: 4, resolutionHours: 24 });
-    const customer = await this.customers.create({ tenantId: tenant.id, name: 'Jane Customer', email: 'jane@example.com', company: 'Acme' });
-    const ticket = await this.tickets.create({
+  async seed() {
+    const tenant = await this.findOrCreate(
+      this.tenants,
+      { slug: 'acme' },
+      { name: 'Acme Helpdesk', slug: 'acme' },
+    );
+    const tenantOptions = { tenantId: tenant.id };
+    const adminRole = await this.findOrCreate(this.roles, { name: 'admin' }, { tenantId: tenant.id, name: 'admin' }, tenantOptions);
+    const agentRole = await this.findOrCreate(this.roles, { name: 'agent' }, { tenantId: tenant.id, name: 'agent' }, tenantOptions);
+    await this.findOrCreate(this.permissions, { roleId: adminRole.id, name: 'system:admin' }, { tenantId: tenant.id, roleId: adminRole.id, name: 'system:admin' }, tenantOptions);
+    await this.findOrCreate(this.permissions, { roleId: agentRole.id, name: 'tickets:manage' }, { tenantId: tenant.id, roleId: agentRole.id, name: 'tickets:manage' }, tenantOptions);
+    await this.findOrCreate(
+      this.users,
+      { email: 'admin@demo.com' },
+      { tenantId: tenant.id, name: 'Admin User', email: 'admin@demo.com', password: await hashPassword('admin123'), role: 'admin', roleId: adminRole.id },
+      tenantOptions,
+    );
+    const agent = await this.findOrCreate(
+      this.users,
+      { email: 'agent@demo.com' },
+      { tenantId: tenant.id, name: 'Agent User', email: 'agent@demo.com', password: await hashPassword('agent123'), role: 'agent', roleId: agentRole.id },
+      tenantOptions,
+    );
+    const department = await this.findOrCreate(this.departments, { name: 'IT Support' }, { tenantId: tenant.id, name: 'IT Support' }, tenantOptions);
+    const team = await this.findOrCreate(this.teams, { name: 'Level 1' }, { tenantId: tenant.id, name: 'Level 1', departmentId: department.id }, tenantOptions);
+    await this.findOrCreate(this.agentProfiles, { userId: agent.id }, { tenantId: tenant.id, userId: agent.id, teamId: team.id, title: 'Support Agent', active: true }, tenantOptions);
+    await this.findOrCreate(this.priorities, { name: 'High' }, { tenantId: tenant.id, name: 'High', rank: 1, responseHours: 4 }, tenantOptions);
+    await this.findOrCreate(this.priorities, { name: 'Medium' }, { tenantId: tenant.id, name: 'Medium', rank: 2, responseHours: 12 }, tenantOptions);
+    await this.findOrCreate(this.categories, { name: 'Hardware' }, { tenantId: tenant.id, name: 'Hardware' }, tenantOptions);
+    await this.findOrCreate(this.categories, { name: 'Software' }, { tenantId: tenant.id, name: 'Software' }, tenantOptions);
+    const service = await this.findOrCreate(this.services, { name: 'Laptop Support' }, { tenantId: tenant.id, name: 'Laptop Support', departmentId: department.id }, tenantOptions);
+    await this.findOrCreate(this.slaPolicies, { name: 'Urgent 4h' }, { tenantId: tenant.id, name: 'Urgent 4h', priority: 'High', responseHours: 4, resolutionHours: 24 }, tenantOptions);
+    const customer = await this.findOrCreate(this.customers, { email: 'jane@example.com' }, { tenantId: tenant.id, name: 'Jane Customer', email: 'jane@example.com', company: 'Acme' }, tenantOptions);
+    const ticket = await this.findOrCreate(this.tickets, { title: 'Laptop will not start' }, {
       tenantId: tenant.id,
       title: 'Laptop will not start',
       description: 'Device does not power on after travel.',
@@ -238,10 +287,10 @@ class BaseStore {
       serviceId: service.id,
       customerId: customer.id,
       assigneeId: agent.id,
-    });
-    await this.comments.create({ tenantId: tenant.id, ticketId: ticket.id, authorId: agent.id, body: 'Initial triage started.' });
-    await this.histories.create({ tenantId: tenant.id, ticketId: ticket.id, action: 'created', fromStatus: null, toStatus: 'open', actorId: agent.id });
-    await this.articles.create({ tenantId: tenant.id, title: 'Reset laptop power state', body: 'Disconnect power, hold power button, reconnect.', category: 'Hardware', published: true });
+    }, tenantOptions);
+    await this.findOrCreate(this.comments, { ticketId: ticket.id, body: 'Initial triage started.' }, { tenantId: tenant.id, ticketId: ticket.id, authorId: agent.id, body: 'Initial triage started.' }, tenantOptions);
+    await this.findOrCreate(this.histories, { ticketId: ticket.id, action: 'created' }, { tenantId: tenant.id, ticketId: ticket.id, action: 'created', fromStatus: null, toStatus: 'open', actorId: agent.id }, tenantOptions);
+    await this.findOrCreate(this.articles, { title: 'Reset laptop power state' }, { tenantId: tenant.id, title: 'Reset laptop power state', body: 'Disconnect power, hold power button, reconnect.', category: 'Hardware', published: true }, tenantOptions);
   }
 
   async addTicketComment(ticketId, data, tenantId) {
@@ -350,15 +399,10 @@ class MemoryStore extends BaseStore {
 }
 
 class PrismaStore extends BaseStore {
-  constructor(databaseUrl) {
+  constructor() {
     super();
-    this.prisma = new PrismaClient({
-      datasources: {
-        db: {
-          url: databaseUrl,
-        },
-      },
-    });
+    const adapter = new PrismaPg(process.env.DATABASE_URL);
+    this.prisma = new PrismaClient({ adapter });
 
     this.tenants = new PrismaRepository(this.prisma, 'tenant');
     this.users = new PrismaRepository(this.prisma, 'user');
@@ -408,7 +452,7 @@ async function createStore({ memory = false } = {}) {
     return store;
   }
 
-  const store = new PrismaStore(process.env.DATABASE_URL);
+  const store = new PrismaStore();
   await store.init();
   return store;
 }
