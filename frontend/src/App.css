@@ -121,6 +121,7 @@
 
 .main-nav button {
   justify-content: flex-start;
+  gap: 8px;
   min-height: 38px;
   border: 1px solid transparent;
   border-radius: 10px;
@@ -288,6 +289,39 @@
   border-color: var(--border);
   background: var(--card);
   color: var(--foreground);
+}
+
+.nav-icon {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+.settings-mark {
+  border: 2px solid currentColor;
+  border-radius: 999px;
+}
+
+.settings-mark::before,
+.settings-mark::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+}
+
+.settings-mark::before {
+  inset: 4px;
+  border-radius: 999px;
+}
+
+.settings-mark::after {
+  left: 5px;
+  top: -4px;
+  width: 2px;
+  height: 18px;
+  transform: rotate(45deg);
 }
 
 .demo-credentials {
@@ -876,6 +910,12 @@ button {
   font-weight: 650;
 }
 
+.danger-outline-button {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: var(--card);
+  color: var(--danger);
+}
+
 .ghost-danger {
   border-color: transparent;
   background: transparent;
@@ -883,16 +923,27 @@ button {
 }
 
 .ghost-danger:hover,
-.danger-button:hover {
+.danger-button:hover,
+.danger-outline-button:hover {
   background: color-mix(in srgb, var(--danger) 8%, var(--card));
 }
 
-.error {
+.error,
+.success {
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
   border-radius: 12px;
+}
+
+.error {
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
   background: color-mix(in srgb, var(--danger) 8%, var(--card));
   color: var(--danger);
+}
+
+.success {
+  border: 1px solid color-mix(in srgb, #16a34a 35%, transparent);
+  background: color-mix(in srgb, #16a34a 9%, var(--card));
+  color: #15803d;
 }
 
 @media (max-width: 1320px) {

@@ -26,14 +26,10 @@ export function AuthProvider({ children }) {
   }, [])
 
   const register = useCallback(async ({ name, email, password, companyName }) => {
-    const data = await apiRequest('/api/auth/register', {
+    return apiRequest('/api/auth/register', {
       method: 'POST',
       body: { name, email, password, companyName },
     })
-    localStorage.setItem('helpdesk_token', data.token)
-    localStorage.setItem('helpdesk_user', JSON.stringify(data.user))
-    setSession(data)
-    return data
   }, [])
 
   const updateUser = useCallback((user) => {

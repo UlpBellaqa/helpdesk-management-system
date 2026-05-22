@@ -8,6 +8,8 @@ import { useAuth } from './state/useAuth.js'
 const statuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed']
 const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'Services', 'Automation', 'Activity', 'Settings']
 const maxAttachmentBytes = 5 * 1024 * 1024
+const defaultPreferenceSettings = { defaultPriority: 'Medium', defaultCategory: 'Software', startPage: 'Overview', compactMode: false }
+const defaultNotificationSettings = { emailAlerts: true, highPriorityAlerts: true, dailySummary: false }
 
 function formatLabel(value) {
   return String(value || 'unassigned').replaceAll('_', ' ')
@@ -41,6 +43,10 @@ function readStoredJson(key, fallback) {
 function readStoredTheme() {
   if (typeof window === 'undefined') return false
   return localStorage.getItem('helpdesk-theme') === 'dark'
+}
+
+function userStorageKey(user, key) {
+  return user?.id ? `helpdesk-${key}-settings:${user.id}` : `helpdesk-${key}-settings`
 }
 
 function userProfileSettings(user, fallback = {}) {
@@ -111,10 +117,10 @@ function App() {
   const [registerForm, setRegisterForm] = useState({ name: '', email: '', password: '', companyName: '' })
   const [darkMode, setDarkMode] = useState(readStoredTheme)
   const [settingsTab, setSettingsTab] = useState('Profile')
-  const [profileSettings, setProfileSettings] = useState(() => userProfileSettings(user, readStoredJson('helpdesk-profile-settings', {})))
+  const [profileSettings, setProfileSettings] = useState(() => userProfileSettings(user, readStoredJson(userStorageKey(user, 'profile'), {})))
   const [profileSaveStatus, setProfileSaveStatus] = useState('')
-  const [preferenceSettings, setPreferenceSettings] = useState(() => readStoredJson('helpdesk-preference-settings', { defaultPriority: 'Medium', defaultCategory: 'Software', startPage: 'Overview', compactMode: false }))
-  const [notificationSettings, setNotificationSettings] = useState(() => readStoredJson('helpdesk-notification-settings', { emailAlerts: true, highPriorityAlerts: true, dailySummary: false }))
+  const [preferenceSettings, setPreferenceSettings] = useState(() => readStoredJson(userStorageKey(user, 'preference'), defaultPreferenceSettings))
+  const [notificationSettings, setNotificationSettings] = useState(() => readStoredJson(userStorageKey(user, 'notification'), defaultNotificationSettings))
   const [dashboard, setDashboard] = useState(null)
   const [tickets, setTickets] = useState([])
   const [customers, setCustomers] = useState([])
@@ -133,6 +139,7 @@ function App() {
   const [aiMessage, setAiMessage] = useState('')
   const [aiReply, setAiReply] = useState('')
   const [error, setError] = useState('')
+  const [authNotice, setAuthNotice] = useState('')
   const [newTicket, setNewTicket] = useState({ title: '', description: '', priority: 'Medium', category: 'Software', customerName: '', customerEmail: '', customerCompany: '' })
   const [newArticle, setNewArticle] = useState({ title: '', body: '', category: 'General', published: true })
   const [newService, setNewService] = useState({ name: '', departmentId: '' })
@@ -154,16 +161,27 @@ function App() {
   }, [darkMode])
 
   useEffect(() => {
-    localStorage.setItem('helpdesk-profile-settings', JSON.stringify(profileSettings))
-  }, [profileSettings])
+    if (!user) return
+    const timeout = window.setTimeout(() => {
+      setProfileSettings(userProfileSettings(user, readStoredJson(userStorageKey(user, 'profile'), {})))
+      setPreferenceSettings(readStoredJson(userStorageKey(user, 'preference'), defaultPreferenceSettings))
+      setNotificationSettings(readStoredJson(userStorageKey(user, 'notification'), defaultNotificationSettings))
+      setProfileSaveStatus('')
+    }, 0)
+    return () => window.clearTimeout(timeout)
+  }, [user])
 
   useEffect(() => {
-    localStorage.setItem('helpdesk-preference-settings', JSON.stringify(preferenceSettings))
-  }, [preferenceSettings])
+    if (user) localStorage.setItem(userStorageKey(user, 'profile'), JSON.stringify(profileSettings))
+  }, [profileSettings, user])
 
   useEffect(() => {
-    localStorage.setItem('helpdesk-notification-settings', JSON.stringify(notificationSettings))
-  }, [notificationSettings])
+    if (user) localStorage.setItem(userStorageKey(user, 'preference'), JSON.stringify(preferenceSettings))
+  }, [preferenceSettings, user])
+
+  useEffect(() => {
+    if (user) localStorage.setItem(userStorageKey(user, 'notification'), JSON.stringify(notificationSettings))
+  }, [notificationSettings, user])
 
   async function reloadTickets() {
     const rows = await apiRequest(`/api/tickets?q=${encodeURIComponent(ticketSearch)}`, { token })
@@ -270,6 +288,7 @@ function App() {
   async function submitLogin(event) {
     event.preventDefault()
     setError('')
+    setAuthNotice('')
     try {
       await login(email, password)
     } catch (requestError) {
@@ -385,11 +404,33 @@ function App() {
   async function submitRegister(event) {
     event.preventDefault()
     setError('')
+    setAuthNotice('')
     try {
-      await register(registerForm)
+      const data = await register(registerForm)
+      const registeredEmail = data.user?.email || registerForm.email.trim().toLowerCase()
+      setEmail(registeredEmail)
+      setPassword('')
+      setRegisterForm({ name: '', email: '', password: '', companyName: '' })
+      setAuthMode('login')
+      setAuthNotice(`Account created for ${registeredEmail}. Sign in to continue.`)
     } catch (requestError) {
       setError(requestError.message)
     }
+  }
+
+  function confirmLogout() {
+    if (!window.confirm('Do you want to log out?')) return
+    logout()
+  }
+
+  function resetLocalSettings() {
+    if (!user) return
+    localStorage.removeItem(userStorageKey(user, 'profile'))
+    localStorage.removeItem(userStorageKey(user, 'preference'))
+    localStorage.removeItem(userStorageKey(user, 'notification'))
+    setProfileSettings(userProfileSettings(user))
+    setPreferenceSettings(defaultPreferenceSettings)
+    setNotificationSettings(defaultNotificationSettings)
   }
 
   async function deleteAttachment(attachmentId) {
@@ -502,8 +543,8 @@ function App() {
         <form className="login-card" onSubmit={authMode === 'login' ? submitLogin : submitRegister}>
           <div className="login-brand"><span>HD</span><div><h1>Helpdesk</h1><p>{authMode === 'login' ? 'Sign in to continue.' : 'Create a new workspace account.'}</p></div></div>
           <div className="auth-tabs">
-            <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); setError('') }}>Sign in</button>
-            <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => { setAuthMode('register'); setError('') }}>Sign up</button>
+            <button type="button" className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); setError(''); setAuthNotice('') }}>Sign in</button>
+            <button type="button" className={authMode === 'register' ? 'active' : ''} onClick={() => { setAuthMode('register'); setError(''); setAuthNotice('') }}>Sign up</button>
           </div>
           {authMode === 'login' ? (
             <>
@@ -520,6 +561,7 @@ function App() {
             </>
           )}
           <div className="actions"><button type="submit">{authMode === 'login' ? 'Sign in' : 'Create account'}</button><button className="secondary-button" type="button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? 'Light' : 'Dark'}</button></div>
+          {authNotice && <p className="success">{authNotice}</p>}
           {error && <p className="error">{error}</p>}
         </form>
       </main>
@@ -531,7 +573,12 @@ function App() {
       <aside className="sidebar">
         <div className="brand"><span>HD</span><strong>Helpdesk</strong></div>
         <nav className="main-nav">
-          {visibleNavItems.map((item) => <button key={item} className={activeView === item ? 'active' : ''} onClick={() => setActiveView(item)}>{item}</button>)}
+          {visibleNavItems.map((item) => (
+            <button key={item} className={activeView === item ? 'active' : ''} onClick={() => { setActiveView(item); if (item === 'Settings') setSettingsTab('Profile') }}>
+              {item === 'Settings' && <span className="nav-icon settings-mark" aria-hidden="true" />}
+              {item}
+            </button>
+          ))}
         </nav>
         <button className="sidebar-user" onClick={() => { setActiveView('Settings'); setSettingsTab('Profile') }}>
           <strong>{user.name}</strong>
@@ -541,7 +588,7 @@ function App() {
       <section className="workspace">
         <header className="topbar">
           <div><h1>{activeView}</h1><p>{openTickets.length} open tickets / {highPriorityTickets.length} high priority / {unreadNotifications.length} unread notifications</p></div>
-          <div className="actions"><button className="secondary-button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? 'Light' : 'Dark'}</button><button onClick={logout}>Logout</button></div>
+          <div className="actions"><button className="secondary-button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? 'Light' : 'Dark'}</button></div>
         </header>
 
         {error && <p className="error">{error}</p>}
@@ -660,7 +707,7 @@ function App() {
         {activeView === 'Settings' && (
           <section className="settings-page">
             <div className="card settings-shell">
-              <div className="card-head"><div><h2>Settings</h2><p className="muted">Manage your profile, workspace preferences and notification defaults.</p></div></div>
+              <div className="card-head"><div><h2>Settings</h2><p className="muted">Manage your profile, workspace preferences and notification defaults.</p></div><button className="danger-outline-button" type="button" onClick={confirmLogout}>Logout</button></div>
               <div className="settings-tabs">
                 {['Profile', 'Preferences', 'Notifications', 'System'].map((tab) => <button key={tab} className={settingsTab === tab ? 'active' : ''} onClick={() => setSettingsTab(tab)}>{tab}</button>)}
               </div>
@@ -739,7 +786,7 @@ function App() {
                     <div><span>Signed in as</span><strong>{user.email}</strong></div>
                     <div><span>Role</span><strong>{user.role}</strong></div>
                   </div>
-                  <div className="actions"><button className="secondary-button" onClick={() => { localStorage.removeItem('helpdesk-profile-settings'); localStorage.removeItem('helpdesk-preference-settings'); localStorage.removeItem('helpdesk-notification-settings') }}>Reset local settings</button></div>
+                  <div className="actions"><button className="secondary-button" onClick={resetLocalSettings}>Reset local settings</button><button className="danger-outline-button" type="button" onClick={confirmLogout}>Logout</button></div>
                 </div>
               )}
             </div>
