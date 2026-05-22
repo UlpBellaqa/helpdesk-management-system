@@ -161,6 +161,22 @@ test('knowledge articles can be internal or admin global', async () => {
     });
     assert.equal(adminDeleteInternal.status, 403);
 
+    const adminEditInternal = await fetch(`${baseUrl}/api/articles/${internalArticleBody.id}`, {
+      method: 'PUT',
+      headers: adminHeaders,
+      body: JSON.stringify({ title: 'Admin edit attempt', body: 'Blocked', category: 'General', published: true }),
+    });
+    assert.equal(adminEditInternal.status, 403);
+
+    const ownerEditInternal = await fetch(`${baseUrl}/api/articles/${internalArticleBody.id}`, {
+      method: 'PUT',
+      headers: firstHeaders,
+      body: JSON.stringify({ title: 'Updated internal guide', body: 'Only this account updated', category: 'General', published: true }),
+    });
+    const editedInternal = await ownerEditInternal.json();
+    assert.equal(ownerEditInternal.status, 200);
+    assert.equal(editedInternal.title, 'Updated internal guide');
+
     const ownerDeleteInternal = await fetch(`${baseUrl}/api/articles/${internalArticleBody.id}`, {
       method: 'DELETE',
       headers: firstHeaders,

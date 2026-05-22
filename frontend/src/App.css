@@ -256,6 +256,12 @@
   max-width: 900px;
 }
 
+.activity-page {
+  display: grid;
+  gap: 14px;
+  max-width: 900px;
+}
+
 .card,
 .login-card {
   display: grid;
@@ -689,6 +695,12 @@
 
 .article-head {
   justify-content: space-between;
+}
+
+.article-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .article-list article > span,

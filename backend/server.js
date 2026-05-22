@@ -635,6 +635,15 @@ function createApp(store) {
     return res.status(201).json(await store.articles.create(prepareArticlePayload(req)));
   }));
 
+  app.put('/api/articles/:id', asyncRoute(async (req, res) => {
+    const article = await canModifyKnowledgeArticle(store, req, req.params.id);
+    if (article === null) return notFound(res);
+    if (article === false) return res.status(403).json({ message: 'You can only edit your own knowledge articles' });
+    const payload = prepareArticlePayload(req);
+    const updated = await store.articles.update(article.id, payload, article.tenantId || undefined);
+    return updated ? res.json(updated) : notFound(res);
+  }));
+
   app.delete('/api/articles/:id', asyncRoute(async (req, res) => {
     const article = await canModifyKnowledgeArticle(store, req, req.params.id);
     if (article === null) return notFound(res);

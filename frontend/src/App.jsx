@@ -6,7 +6,7 @@ import { API_BASE_URL, ApiRequestError, apiRequest } from './api.js'
 import { useAuth } from './state/useAuth.js'
 
 const statuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed']
-const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'Services', 'Automation', 'Activity', 'Settings']
+const navItems = ['Overview', 'Tickets', 'Customers', 'Knowledge', 'Automation', 'Activity', 'Settings']
 const maxAttachmentBytes = 5 * 1024 * 1024
 const defaultPreferenceSettings = { defaultPriority: 'Medium', defaultCategory: 'Software', startPage: 'Overview', compactMode: false }
 const defaultNotificationSettings = { emailAlerts: true, highPriorityAlerts: true, dailySummary: false }
@@ -125,8 +125,6 @@ function App() {
   const [tickets, setTickets] = useState([])
   const [customers, setCustomers] = useState([])
   const [articles, setArticles] = useState([])
-  const [services, setServices] = useState([])
-  const [jobs, setJobs] = useState([])
   const [histories, setHistories] = useState([])
   const [notifications, setNotifications] = useState([])
   const [selectedTicket, setSelectedTicket] = useState(null)
@@ -143,8 +141,7 @@ function App() {
   const [authNotice, setAuthNotice] = useState('')
   const [newTicket, setNewTicket] = useState({ title: '', description: '', priority: 'Medium', category: 'Software', customerName: '', customerEmail: '', customerCompany: '' })
   const [newArticle, setNewArticle] = useState({ title: '', body: '', category: 'General', published: true, global: false })
-  const [newService, setNewService] = useState({ name: '', departmentId: '' })
-  const [newJob, setNewJob] = useState({ type: 'email', payload: '{"reason":"manual follow-up"}' })
+  const [editingArticleId, setEditingArticleId] = useState('')
 
   const visibleNavItems = useMemo(() => {
     if (user?.role === 'customer') return navItems.filter((item) => !['Automation'].includes(item))
@@ -199,20 +196,16 @@ function App() {
   }
 
   const loadWorkspace = useCallback(async () => {
-    const [summary, customerRows, articleRows, serviceRows, jobRows, historyRows, notificationRows] = await Promise.all([
+    const [summary, customerRows, articleRows, historyRows, notificationRows] = await Promise.all([
       apiRequest('/api/dashboard/summary', { token }),
       apiRequest('/api/customers', { token }),
       apiRequest('/api/articles', { token }),
-      apiRequest('/api/services', { token }),
-      apiRequest('/api/jobs', { token }),
       apiRequest('/api/histories', { token }),
       apiRequest('/api/notifications', { token }),
     ])
     setDashboard(summary)
     setCustomers(customerRows)
     setArticles(articleRows)
-    setServices(serviceRows)
-    setJobs(jobRows)
     setHistories(historyRows)
     setNotifications(notificationRows)
   }, [token])
@@ -452,36 +445,36 @@ function App() {
   async function createArticle(event) {
     event.preventDefault()
     if (!newArticle.title.trim() || !newArticle.body.trim()) return
-    await apiRequest('/api/articles', { token, method: 'POST', body: newArticle })
+    await apiRequest(editingArticleId ? `/api/articles/${editingArticleId}` : '/api/articles', {
+      token,
+      method: editingArticleId ? 'PUT' : 'POST',
+      body: newArticle,
+    })
     setNewArticle({ title: '', body: '', category: 'General', published: true, global: user?.role === 'admin' })
+    setEditingArticleId('')
     await loadWorkspace()
+  }
+
+  function editArticle(article) {
+    setEditingArticleId(article.id)
+    setNewArticle({
+      title: article.title || '',
+      body: article.body || '',
+      category: article.category || 'General',
+      published: Boolean(article.published),
+      global: article.tenantId === null,
+    })
+  }
+
+  function cancelArticleEdit() {
+    setEditingArticleId('')
+    setNewArticle({ title: '', body: '', category: 'General', published: true, global: user?.role === 'admin' })
   }
 
   async function deleteArticle(articleId) {
     if (!window.confirm('Delete this knowledge article?')) return
     await apiRequest(`/api/articles/${articleId}`, { token, method: 'DELETE' })
     setArticles((rows) => rows.filter((article) => article.id !== articleId))
-  }
-
-  async function createService(event) {
-    event.preventDefault()
-    if (!newService.name.trim()) return
-    await apiRequest('/api/services', { token, method: 'POST', body: newService })
-    setNewService({ name: '', departmentId: '' })
-    await loadWorkspace()
-  }
-
-  async function enqueueJob(event) {
-    event.preventDefault()
-    let payload = {}
-    try {
-      payload = newJob.payload ? JSON.parse(newJob.payload) : {}
-    } catch {
-      setError('Job payload must be valid JSON')
-      return
-    }
-    await apiRequest('/api/jobs', { token, method: 'POST', body: { type: newJob.type, payload } })
-    await loadWorkspace()
   }
 
   async function markNotificationRead(notificationId) {
@@ -614,7 +607,7 @@ function App() {
               <div className="card metric"><span>Open</span><strong>{openTickets.length}</strong></div>
               <div className="card metric"><span>Customers</span><strong>{customers.length}</strong></div>
               <div className="card metric"><span>Articles</span><strong>{articles.length}</strong></div>
-              <div className="card metric"><span>Jobs</span><strong>{jobs.length}</strong></div>
+              <div className="card metric"><span>Unread</span><strong>{unreadNotifications.length}</strong></div>
             </section>
             <section className="grid-two">
               <div className="card"><div className="card-head"><h2>Ticket status</h2></div><div className="status-list">{statusEntries.map(([status, count]) => <div key={status}><span>{formatLabel(status)}</span><strong>{count}</strong></div>)} {!statusEntries.length && <EmptyState title="No queue activity" text="Ticket status data will appear here when work begins." />}</div></div>
@@ -702,42 +695,37 @@ function App() {
                     <div className="article-head"><span>{article.category}</span><span>{article.data?.scope === 'global' ? 'All accounts' : 'Internal'} / {article.published ? 'Published' : 'Draft'}</span></div>
                     <h3>{article.title}</h3>
                     <p>{article.body}</p>
-                    <button className="danger-button ghost-danger" type="button" onClick={() => deleteArticle(article.id)}>Delete</button>
+                    <div className="article-actions">
+                      <button className="secondary-button" type="button" onClick={() => editArticle(article)}>Edit</button>
+                      <button className="danger-button ghost-danger" type="button" onClick={() => deleteArticle(article.id)}>Delete</button>
+                    </div>
                   </article>
                 ))}
                 {!visibleArticles.length && <EmptyState title="No articles found" text="Publish a knowledge article to save repeat answers for this account." />}
               </div>
             </div>
             <form className="card side-card" onSubmit={createArticle}>
-              <h2>New article</h2>
+              <h2>{editingArticleId ? 'Edit article' : 'New article'}</h2>
               <input placeholder="Title" value={newArticle.title} onChange={(event) => setNewArticle({ ...newArticle, title: event.target.value })} />
               <input placeholder="Category" value={newArticle.category} onChange={(event) => setNewArticle({ ...newArticle, category: event.target.value })} />
               <textarea placeholder="Body" value={newArticle.body} onChange={(event) => setNewArticle({ ...newArticle, body: event.target.value })} />
               <label className="setting-row"><span><strong>Published</strong><small>Visible in this account's Knowledge page.</small></span><input type="checkbox" checked={newArticle.published} onChange={(event) => setNewArticle({ ...newArticle, published: event.target.checked })} /></label>
               {canPublishGlobalKnowledge && <label className="setting-row"><span><strong>All accounts</strong><small>Admin article visible in every account.</small></span><input type="checkbox" checked={newArticle.global} onChange={(event) => setNewArticle({ ...newArticle, global: event.target.checked })} /></label>}
-              <button type="submit">Publish</button>
+              <div className="actions"><button type="submit">{editingArticleId ? 'Save changes' : 'Publish'}</button>{editingArticleId && <button className="secondary-button" type="button" onClick={cancelArticleEdit}>Cancel</button>}</div>
             </form>
-          </section>
-        )}
-
-        {activeView === 'Services' && (
-          <section className="grid-main-side">
-            <div className="card"><div className="card-head"><h2>Services</h2><span>{services.length}</span></div><div className="table-list">{services.map((service) => <div key={service.id} className="resource-row with-action"><div><strong>{service.name}</strong><span>Department #{service.departmentId || 'n/a'} / Service</span></div><button className="danger-button ghost-danger" onClick={() => deleteResource('services', service.id)}>Delete</button></div>)}</div></div>
-            <div className="side-stack"><form className="card side-card" onSubmit={createService}><h2>Add service</h2><input placeholder="Service name" value={newService.name} onChange={(event) => setNewService({ ...newService, name: event.target.value })} /><input placeholder="Department ID" value={newService.departmentId} onChange={(event) => setNewService({ ...newService, departmentId: event.target.value })} /><button type="submit">Create</button></form></div>
           </section>
         )}
 
         {activeView === 'Automation' && (
           <section className="grid-two">
-            <form className="card" onSubmit={searchAll}><div className="card-head"><h2>Search and cache</h2>{searchResult && <span>{searchResult.cached ? 'Cached' : 'Fresh'}</span>}</div><div className="inline-form"><input placeholder="Search tickets, customers, articles..." value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} /><button type="submit">Search</button></div><SearchResultSummary result={searchResult} /></form>
+            <form className="card" onSubmit={searchAll}><div className="card-head"><h2>Global Search</h2>{searchResult && <span>{searchResult.cached ? 'Cached' : 'Fresh'}</span>}</div><div className="inline-form"><input placeholder="Search tickets, customers, articles..." value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} /><button type="submit">Search</button></div><SearchResultSummary result={searchResult} /></form>
             <div className="card"><div className="card-head"><h2>AI assistant</h2></div><textarea placeholder="Ask about ticket priority, customer follow-up, queue risks..." value={aiMessage} onChange={(event) => setAiMessage(event.target.value)} /><button onClick={askAi}>Ask assistant</button>{aiReply && <div className="assistant-reply">{aiReply}</div>}</div>
           </section>
         )}
 
         {activeView === 'Activity' && (
-          <section className="grid-main-side">
+          <section className="activity-page">
             <div className="card"><div className="card-head"><h2>Ticket history</h2><span>{histories.length}</span></div><div className="timeline">{histories.map((history) => <div key={history.id}><strong>{formatLabel(history.action)}</strong><span>Ticket #{history.ticketId}</span></div>)}</div></div>
-            <form className="card side-card" onSubmit={enqueueJob}><h2>Queue job</h2><input value={newJob.type} onChange={(event) => setNewJob({ ...newJob, type: event.target.value })} /><textarea value={newJob.payload} onChange={(event) => setNewJob({ ...newJob, payload: event.target.value })} /><button type="submit">Queue</button><div className="table-list">{jobs.slice(-4).reverse().map((job) => <div key={job.id} className="table-row with-action"><strong>{job.type}</strong><span>{job.status}</span><span>{job.result || 'Pending'}</span></div>)}</div></form>
           </section>
         )}
 
