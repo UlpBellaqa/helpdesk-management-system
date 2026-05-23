@@ -65,15 +65,17 @@ API perfshin:
 ```bash
 cd backend
 npm test
+npm run test:db
 ```
 
 ```bash
 cd frontend
 npm run lint
+npm test
 npm run build
 ```
 
-Testet backend perdorin nje store ne memorie per te qene te thjeshta ne CI. Kur vendoset `DATABASE_URL`, aplikacioni real perdor PostgreSQL; kur vendoset `REDIS_URL`, kerkimi cache-ohet ne Redis.
+Testet backend perfshijne API tests me store ne memorie dhe database integration tests me PostgreSQL kur vendoset `DATABASE_URL`. Frontend perdor Vitest dhe React Testing Library per component tests, plus lint dhe production build ne CI. Kur vendoset `REDIS_URL`, kerkimi cache-ohet ne Redis.
 
 ## CI/CD
 
