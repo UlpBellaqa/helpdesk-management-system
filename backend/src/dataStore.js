@@ -219,6 +219,10 @@ class RedisCache {
   }
 }
 
+function createCache({ redisUrl = process.env.REDIS_URL } = {}) {
+  return redisUrl ? new RedisCache(redisUrl) : new MemoryCache();
+}
+
 class BackgroundQueue {
   constructor(jobRepository) {
     this.jobRepository = jobRepository;
@@ -393,7 +397,7 @@ class MemoryStore extends BaseStore {
     resourceConfigs.forEach((config) => {
       this[config.property] = new MemoryRepository({ tenantScoped: config.tenantScoped !== false });
     });
-    this.cache = new MemoryCache();
+    this.cache = createCache({ redisUrl: null });
     this.queue = new BackgroundQueue(this.jobs);
   }
 }
@@ -427,7 +431,7 @@ class PrismaStore extends BaseStore {
     this.cacheEntries = new PrismaRepository(this.prisma, 'cacheEntry');
     this.jobs = new PrismaRepository(this.prisma, 'backgroundJob');
 
-    this.cache = new MemoryCache();
+    this.cache = createCache();
     this.queue = new BackgroundQueue(this.jobs);
   }
 
@@ -457,4 +461,4 @@ async function createStore({ memory = false } = {}) {
   return store;
 }
 
-module.exports = { createStore, resourceConfigs };
+module.exports = { createStore, resourceConfigs, createCache };
