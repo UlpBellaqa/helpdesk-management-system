@@ -4,29 +4,42 @@ const endpointDocs = [
   { method: 'post', path: '/api/auth/login', summary: 'Login user', auth: false, body: { email: 'admin@demo.com', password: 'admin123' } },
   { method: 'get', path: '/api/auth/me', summary: 'Current authenticated user' },
   { method: 'patch', path: '/api/auth/me', summary: 'Update current authenticated user profile', body: { name: 'Demo User', email: 'admin@demo.com', department: 'Support Operations', avatar: 'data:image/jpeg;base64,...' } },
+  { method: 'get', path: '/api/tenants/current', summary: 'Current tenant workspace' },
+  { method: 'get', path: '/api/users', summary: 'List users in current tenant' },
+  { method: 'post', path: '/api/users', summary: 'Create tenant user', body: { name: 'Support Agent', email: 'agent@example.com', password: 'agent123', role: 'agent' } },
   { method: 'get', path: '/api/dashboard/summary', summary: 'Dashboard metrics' },
   { method: 'get', path: '/api/search', summary: 'Search tickets, customers, and articles', query: { q: 'laptop' } },
   { method: 'post', path: '/api/ai/chat', summary: 'Helpdesk assistant reply', body: { message: 'Which ticket should we handle first?' } },
   { method: 'get', path: '/api/tickets', summary: 'List tickets', query: { q: '' } },
   { method: 'post', path: '/api/tickets', summary: 'Create ticket', body: { title: 'Printer not working', description: 'Office printer shows paper jam.', status: 'open', priority: 'Medium', category: 'Hardware' } },
+  { method: 'get', path: '/api/tickets/{id}', summary: 'Get ticket by id', params: { id: '1' } },
+  { method: 'put', path: '/api/tickets/{id}', summary: 'Update ticket', params: { id: '1' }, body: { title: 'Updated printer issue', priority: 'High', category: 'Hardware' } },
   { method: 'delete', path: '/api/tickets/{id}', summary: 'Delete ticket', params: { id: '2' } },
   { method: 'get', path: '/api/tickets/{id}/comments', summary: 'List ticket comments', params: { id: '1' } },
   { method: 'post', path: '/api/tickets/{id}/comments', summary: 'Add ticket comment', params: { id: '1' }, body: { body: 'Testing comment from API docs.', internal: false } },
+  { method: 'delete', path: '/api/tickets/{ticketId}/comments/{commentId}', summary: 'Delete ticket comment', params: { ticketId: '1', commentId: '1' } },
   { method: 'get', path: '/api/tickets/{id}/attachments', summary: 'List ticket attachments', params: { id: '1' } },
   { method: 'post', path: '/api/tickets/{id}/attachments', summary: 'Upload ticket attachment', params: { id: '1' }, body: { fileName: 'screenshot.png', type: 'image/png', size: 12345, url: 'data:image/png;base64,...' } },
   { method: 'delete', path: '/api/tickets/{ticketId}/attachments/{attachmentId}', summary: 'Delete ticket attachment', params: { ticketId: '1', attachmentId: '1' } },
   { method: 'patch', path: '/api/tickets/{id}/status', summary: 'Change ticket status', params: { id: '1' }, body: { status: 'triage' } },
   { method: 'get', path: '/api/customers', summary: 'List customers' },
   { method: 'post', path: '/api/customers', summary: 'Create customer', body: { name: 'Arta Customer', email: 'arta@example.com', company: 'Acme' } },
+  { method: 'get', path: '/api/customers/{id}', summary: 'Get customer by id', params: { id: '1' } },
+  { method: 'put', path: '/api/customers/{id}', summary: 'Update customer', params: { id: '1' }, body: { name: 'Arta Customer', email: 'arta@example.com', company: 'Updated Company' } },
   { method: 'delete', path: '/api/customers/{id}', summary: 'Delete customer', params: { id: '2' } },
   { method: 'get', path: '/api/articles', summary: 'List knowledge articles' },
   { method: 'post', path: '/api/articles', summary: 'Create knowledge article', body: { title: 'Reset password', body: 'Open settings and choose reset password.', category: 'Account', published: true } },
+  { method: 'put', path: '/api/articles/{id}', summary: 'Update knowledge article', params: { id: '1' }, body: { title: 'Reset password', body: 'Updated steps.', category: 'Account', published: true, global: false } },
+  { method: 'delete', path: '/api/articles/{id}', summary: 'Delete knowledge article', params: { id: '1' } },
   { method: 'get', path: '/api/services', summary: 'List services' },
   { method: 'post', path: '/api/services', summary: 'Create service', body: { name: 'Email Support', departmentId: '1' } },
   { method: 'delete', path: '/api/services/{id}', summary: 'Delete service', params: { id: '1' } },
   { method: 'get', path: '/api/jobs', summary: 'List background jobs' },
+  { method: 'post', path: '/api/jobs', summary: 'Create background job', body: { type: 'email', payload: { ticketId: '1' } } },
   { method: 'get', path: '/api/histories', summary: 'List ticket history' },
   { method: 'get', path: '/api/notifications', summary: 'List notifications' },
+  { method: 'patch', path: '/api/notifications/{id}/read', summary: 'Mark notification as read', params: { id: '1' } },
+  { method: 'delete', path: '/api/notifications/{id}', summary: 'Delete notification', params: { id: '1' } },
 ];
 
 function responseFor(method) {
@@ -137,7 +150,7 @@ function swaggerHtml() {
 </head>
 <body>
   <header>
-    <div><h1>Helpdesk API</h1><p>27 endpoint-e praktike. Hape endpoint-in, ndrysho fushat dhe kliko Send.</p></div>
+    <div><h1>Helpdesk API</h1><p>41 endpoint-e praktike. Hape endpoint-in, ndrysho fushat dhe kliko Send.</p></div>
   </header>
   <main id="app"></main>
   <script>
