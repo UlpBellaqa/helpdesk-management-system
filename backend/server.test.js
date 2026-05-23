@@ -280,6 +280,52 @@ test('customers cannot mark their ticket replies as internal notes', async () =>
   });
 });
 
+test('customers cannot perform admin or agent ticket actions', async () => {
+  await withServer(async (baseUrl) => {
+    const register = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyName: 'Customer RBAC',
+        name: 'Customer RBAC User',
+        email: `customer-rbac-${Date.now()}@example.com`,
+        password: 'secret123',
+      }),
+    });
+    const customer = await register.json();
+    assert.equal(register.status, 201);
+
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${customer.token}` };
+    const ticketResponse = await fetch(`${baseUrl}/api/tickets`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ title: 'Customer-managed ticket', status: 'open', priority: 'Medium' }),
+    });
+    const ticket = await ticketResponse.json();
+    assert.equal(ticketResponse.status, 201);
+
+    const statusChange = await fetch(`${baseUrl}/api/tickets/${ticket.id}/status`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ status: 'in_progress' }),
+    });
+    assert.equal(statusChange.status, 403);
+
+    const deleteTicket = await fetch(`${baseUrl}/api/tickets/${ticket.id}`, {
+      method: 'DELETE',
+      headers,
+    });
+    assert.equal(deleteTicket.status, 403);
+
+    const job = await fetch(`${baseUrl}/api/jobs`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ type: 'email', payload: { ticketId: ticket.id } }),
+    });
+    assert.equal(job.status, 403);
+  });
+});
+
 test('ticket attachments can be uploaded, listed, and deleted', async () => {
   await withServer(async (baseUrl) => {
     const admin = await login(baseUrl);

@@ -465,6 +465,7 @@ function createApp(store) {
   });
 
   const signToken = (payload) => authMiddleware.signToken(payload);
+  const requireAdminOrAgent = authMiddleware.requireAdminOrAgent();
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
     const validationError = validateRegisterRequest(req.body);
@@ -601,7 +602,7 @@ function createApp(store) {
     return res.json({ reply, conversation });
   }));
 
-  app.post('/api/jobs', asyncRoute(async (req, res) => {
+  app.post('/api/jobs', requireAdminOrAgent, asyncRoute(async (req, res) => {
     const job = await store.queue.enqueue(req.body.type || 'email', req.body.payload || {}, tenantId(req));
     return res.status(202).json(job);
   }));
@@ -659,7 +660,7 @@ function createApp(store) {
     return res.status(201).json(created);
   }));
 
-  app.delete('/api/tickets/:ticketId/attachments/:attachmentId', asyncRoute(async (req, res) => {
+  app.delete('/api/tickets/:ticketId/attachments/:attachmentId', requireAdminOrAgent, asyncRoute(async (req, res) => {
     const ticket = await store.tickets.findById(req.params.ticketId, tenantId(req));
     if (!ticket) return notFound(res);
 
@@ -672,7 +673,7 @@ function createApp(store) {
     return res.status(204).send();
   }));
 
-  app.delete('/api/tickets/:ticketId/comments/:commentId', asyncRoute(async (req, res) => {
+  app.delete('/api/tickets/:ticketId/comments/:commentId', requireAdminOrAgent, asyncRoute(async (req, res) => {
     const ticket = await store.tickets.findById(req.params.ticketId, tenantId(req));
     if (!ticket) return notFound(res);
 
@@ -690,7 +691,7 @@ function createApp(store) {
     return res.status(204).send();
   }));
 
-  app.delete('/api/tickets/:id', asyncRoute(async (req, res) => {
+  app.delete('/api/tickets/:id', requireAdminOrAgent, asyncRoute(async (req, res) => {
     const ticket = await store.tickets.findById(req.params.id, tenantId(req));
     if (!ticket) return notFound(res);
 
@@ -708,7 +709,7 @@ function createApp(store) {
     return res.status(204).send();
   }));
 
-  app.patch('/api/tickets/:id/status', asyncRoute(async (req, res) => {
+  app.patch('/api/tickets/:id/status', requireAdminOrAgent, asyncRoute(async (req, res) => {
     const allowedStatuses = ['open', 'triage', 'in_progress', 'waiting_customer', 'resolved', 'closed'];
     if (!allowedStatuses.includes(req.body.status)) {
       return res.status(400).json({ message: `Status must be one of: ${allowedStatuses.join(', ')}` });
@@ -760,7 +761,7 @@ function createApp(store) {
       return res.json(await repo.list({ tenantId: tenantId(req), search: req.query.q, filters }));
     }));
 
-    if (allowedRoutes.has('postList')) app.post(`/api/${resource}`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('postList')) app.post(`/api/${resource}`, requireAdminOrAgent, asyncRoute(async (req, res) => {
       const payload = prepareResourcePayload(req, resource);
       return res.status(201).json(await repo.create(payload));
     }));
@@ -770,13 +771,13 @@ function createApp(store) {
       return row ? res.json(row) : notFound(res);
     }));
 
-    if (allowedRoutes.has('putItem')) app.put(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('putItem')) app.put(`/api/${resource}/:id`, requireAdminOrAgent, asyncRoute(async (req, res) => {
       const payload = sanitizeUpdatePayload(req, resource);
       const row = await repo.update(req.params.id, payload, tenantId(req));
       return row ? res.json(row) : notFound(res);
     }));
 
-    if (allowedRoutes.has('deleteItem')) app.delete(`/api/${resource}/:id`, asyncRoute(async (req, res) => {
+    if (allowedRoutes.has('deleteItem')) app.delete(`/api/${resource}/:id`, requireAdminOrAgent, asyncRoute(async (req, res) => {
       return (await repo.delete(req.params.id, tenantId(req))) ? res.status(204).send() : notFound(res);
     }));
   });

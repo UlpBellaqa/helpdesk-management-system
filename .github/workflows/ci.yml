@@ -70,12 +70,10 @@ jobs:
       - name: Lint frontend code
         run: npm run lint
         working-directory: frontend
-        continue-on-error: true
       
       - name: Frontend tests
         run: npm test
         working-directory: frontend
-        continue-on-error: true
   
   code-quality:
     runs-on: ubuntu-latest
