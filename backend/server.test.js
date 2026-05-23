@@ -7,7 +7,7 @@ async function withServer(run) {
   const server = createApp(store).listen(0);
   const { port } = server.address();
   try {
-    await run(`http://127.0.0.1:${port}`);
+    await run(`http://127.0.0.1:${port}`, store);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await store.close();
@@ -23,6 +23,28 @@ async function login(baseUrl, email = 'admin@demo.com', password = 'admin123') {
   const body = await response.json();
   assert.equal(response.status, 200);
   assert.ok(body.token);
+  return body;
+}
+
+async function registerTenant(baseUrl, { companyName, name, email, password = 'secret123', companySlug }) {
+  const response = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ companyName, companySlug, name, email, password }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 201);
+  return body;
+}
+
+async function createTenantUser(baseUrl, adminToken, { name, email, password = 'secret123', role = 'customer' }) {
+  const response = await fetch(`${baseUrl}/api/users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+    body: JSON.stringify({ name, email, password, role }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 201);
   return body;
 }
 
@@ -110,6 +132,122 @@ test('registered users can sign in again with the same email after normalization
   });
 });
 
+test('public registration creates the tenant owner as admin', async () => {
+  await withServer(async (baseUrl) => {
+    const register = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyName: 'Role Normalization',
+        name: 'Role Test User',
+        email: `role-test-${Date.now()}@example.com`,
+        password: 'secret123',
+        role: 'superadmin',
+      }),
+    });
+    const body = await register.json();
+    assert.equal(register.status, 201);
+    assert.equal(body.user.role, 'admin');
+  });
+});
+
+test('tenant scoped repositories fail closed without tenant id', async () => {
+  await withServer(async (baseUrl, store) => {
+    await assert.rejects(
+      () => store.tickets.list(),
+      /Missing tenantId/,
+    );
+
+    const tenants = await store.tenants.list();
+    assert.ok(tenants.length > 0);
+  });
+});
+
+test('inactive tenants cannot login or use an existing token', async () => {
+  await withServer(async (baseUrl, store) => {
+    const session = await login(baseUrl);
+    await store.tenants.update(session.user.tenantId, { data: { active: false } });
+
+    const tickets = await fetch(`${baseUrl}/api/tickets`, {
+      headers: { Authorization: `Bearer ${session.token}` },
+    });
+    assert.equal(tickets.status, 401);
+
+    const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@demo.com', password: 'admin123' }),
+    });
+    assert.equal(loginResponse.status, 401);
+  });
+});
+
+test('tenant admins can create agents and customers in their tenant', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await registerTenant(baseUrl, {
+      companyName: 'Tenant User Management',
+      companySlug: `tenant-users-${Date.now()}`,
+      name: 'Tenant Owner',
+      email: `tenant-owner-${Date.now()}@example.com`,
+    });
+
+    const agent = await createTenantUser(baseUrl, admin.token, {
+      name: 'Tenant Agent',
+      email: `tenant-agent-${Date.now()}@example.com`,
+      role: 'agent',
+    });
+    const customer = await createTenantUser(baseUrl, admin.token, {
+      name: 'Tenant Customer',
+      email: `tenant-customer-${Date.now()}@example.com`,
+      role: 'customer',
+    });
+
+    assert.equal(agent.role, 'agent');
+    assert.equal(agent.tenantId, admin.user.tenantId);
+    assert.equal(customer.role, 'customer');
+    assert.equal(customer.tenantId, admin.user.tenantId);
+
+    const list = await fetch(`${baseUrl}/api/users`, {
+      headers: { Authorization: `Bearer ${admin.token}` },
+    });
+    const users = await list.json();
+    assert.equal(list.status, 200);
+    assert.ok(users.some((user) => user.email === agent.email));
+    assert.ok(users.some((user) => user.email === customer.email));
+    assert.equal(users.some((user) => user.password), false);
+  });
+});
+
+test('non-admin users cannot create tenant users', async () => {
+  await withServer(async (baseUrl) => {
+    const admin = await registerTenant(baseUrl, {
+      companyName: 'Tenant User RBAC',
+      companySlug: `tenant-user-rbac-${Date.now()}`,
+      name: 'Tenant Owner',
+      email: `tenant-owner-rbac-${Date.now()}@example.com`,
+    });
+    const agentEmail = `tenant-agent-rbac-${Date.now()}@example.com`;
+    await createTenantUser(baseUrl, admin.token, {
+      name: 'Tenant Agent',
+      email: agentEmail,
+      role: 'agent',
+    });
+    const agentSession = await login(baseUrl, agentEmail, 'secret123');
+
+    const createCustomer = await fetch(`${baseUrl}/api/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${agentSession.token}` },
+      body: JSON.stringify({
+        name: 'Blocked Customer',
+        email: `blocked-customer-${Date.now()}@example.com`,
+        password: 'secret123',
+        role: 'customer',
+      }),
+    });
+    assert.equal(createCustomer.status, 403);
+  });
+});
+
 test('knowledge articles can be internal or admin global', async () => {
   await withServer(async (baseUrl) => {
     const admin = await login(baseUrl);
@@ -139,7 +277,7 @@ test('knowledge articles can be internal or admin global', async () => {
     const internalArticle = await fetch(`${baseUrl}/api/articles`, {
       method: 'POST',
       headers: firstHeaders,
-      body: JSON.stringify({ title: 'Internal customer guide', body: 'Only this account', category: 'General', published: true }),
+      body: JSON.stringify({ title: 'Internal customer guide', body: 'Only this account', category: 'General', published: true, global: false }),
     });
     const internalArticleBody = await internalArticle.json();
     assert.equal(internalArticle.status, 201);
@@ -159,19 +297,19 @@ test('knowledge articles can be internal or admin global', async () => {
       method: 'DELETE',
       headers: adminHeaders,
     });
-    assert.equal(adminDeleteInternal.status, 403);
+    assert.equal(adminDeleteInternal.status, 404);
 
     const adminEditInternal = await fetch(`${baseUrl}/api/articles/${internalArticleBody.id}`, {
       method: 'PUT',
       headers: adminHeaders,
       body: JSON.stringify({ title: 'Admin edit attempt', body: 'Blocked', category: 'General', published: true }),
     });
-    assert.equal(adminEditInternal.status, 403);
+    assert.equal(adminEditInternal.status, 404);
 
     const ownerEditInternal = await fetch(`${baseUrl}/api/articles/${internalArticleBody.id}`, {
       method: 'PUT',
       headers: firstHeaders,
-      body: JSON.stringify({ title: 'Updated internal guide', body: 'Only this account updated', category: 'General', published: true }),
+      body: JSON.stringify({ title: 'Updated internal guide', body: 'Only this account updated', category: 'General', published: true, global: false }),
     });
     const editedInternal = await ownerEditInternal.json();
     assert.equal(ownerEditInternal.status, 200);
@@ -202,6 +340,70 @@ test('knowledge articles can be internal or admin global', async () => {
     const secondRows = await secondList.json();
     assert.ok(secondRows.some((article) => article.title === 'Global reset guide'));
     assert.equal(secondRows.some((article) => article.title === 'Internal customer guide'), false);
+
+    const secondSearch = await fetch(`${baseUrl}/api/search?q=Global%20reset`, {
+      headers: { Authorization: `Bearer ${secondCustomer.token}` },
+    });
+    const secondSearchRows = await secondSearch.json();
+    assert.ok(secondSearchRows.results.some((result) => result.resource === 'articles' && result.item.title === 'Global reset guide'));
+  });
+});
+
+test('tenant users cannot modify articles from another tenant but can edit their own', async () => {
+  await withServer(async (baseUrl) => {
+    const registerOwner = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyName: 'Shared Knowledge Tenant',
+        companySlug: `shared-knowledge-${Date.now()}`,
+        name: 'Article Owner',
+        email: `article-owner-${Date.now()}@example.com`,
+        password: 'secret123',
+      }),
+    });
+    const owner = await registerOwner.json();
+    assert.equal(registerOwner.status, 201);
+
+    const ownerHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${owner.token}` };
+    const articleResponse = await fetch(`${baseUrl}/api/articles`, {
+      method: 'POST',
+      headers: ownerHeaders,
+      body: JSON.stringify({ title: 'Owner-only edit guide', body: 'Owned content', category: 'General', published: true, global: false }),
+    });
+    const article = await articleResponse.json();
+    assert.equal(articleResponse.status, 201);
+
+    const secondCustomer = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyName: 'Another Shared Knowledge Tenant',
+        companySlug: `another-shared-knowledge-${Date.now()}`,
+        name: 'Other Article User',
+        email: `other-article-user-${Date.now()}@example.com`,
+        password: 'secret123',
+      }),
+    });
+    const other = await secondCustomer.json();
+    assert.equal(secondCustomer.status, 201);
+
+    const otherHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${other.token}` };
+    const crossTenantEdit = await fetch(`${baseUrl}/api/articles/${article.id}`, {
+      method: 'PUT',
+      headers: otherHeaders,
+      body: JSON.stringify({ title: 'Cross tenant edit attempt', body: 'Blocked', category: 'General', published: true }),
+    });
+    assert.equal(crossTenantEdit.status, 404);
+
+    const ownerEdit = await fetch(`${baseUrl}/api/articles/${article.id}`, {
+      method: 'PUT',
+      headers: ownerHeaders,
+      body: JSON.stringify({ title: 'Owner edited guide', body: 'Owned content updated', category: 'General', published: true, global: false }),
+    });
+    const editedArticle = await ownerEdit.json();
+    assert.equal(ownerEdit.status, 200);
+    assert.equal(editedArticle.title, 'Owner edited guide');
   });
 });
 
@@ -247,18 +449,18 @@ test('ticket comments and status updates create history', async () => {
 
 test('customers cannot mark their ticket replies as internal notes', async () => {
   await withServer(async (baseUrl) => {
-    const register = await fetch(`${baseUrl}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        companyName: 'Customer Notes',
-        name: 'Customer Notes User',
-        email: `customer-notes-${Date.now()}@example.com`,
-        password: 'secret123',
-      }),
+    const admin = await registerTenant(baseUrl, {
+      companyName: 'Customer Notes',
+      name: 'Customer Notes Admin',
+      email: `customer-notes-admin-${Date.now()}@example.com`,
     });
-    const customer = await register.json();
-    assert.equal(register.status, 201);
+    const customerEmail = `customer-notes-${Date.now()}@example.com`;
+    await createTenantUser(baseUrl, admin.token, {
+      name: 'Customer Notes User',
+      email: customerEmail,
+      role: 'customer',
+    });
+    const customer = await login(baseUrl, customerEmail, 'secret123');
 
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${customer.token}` };
     const ticketResponse = await fetch(`${baseUrl}/api/tickets`, {
@@ -282,18 +484,18 @@ test('customers cannot mark their ticket replies as internal notes', async () =>
 
 test('customers cannot perform admin or agent ticket actions', async () => {
   await withServer(async (baseUrl) => {
-    const register = await fetch(`${baseUrl}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        companyName: 'Customer RBAC',
-        name: 'Customer RBAC User',
-        email: `customer-rbac-${Date.now()}@example.com`,
-        password: 'secret123',
-      }),
+    const admin = await registerTenant(baseUrl, {
+      companyName: 'Customer RBAC',
+      name: 'Customer RBAC Admin',
+      email: `customer-rbac-admin-${Date.now()}@example.com`,
     });
-    const customer = await register.json();
-    assert.equal(register.status, 201);
+    const customerEmail = `customer-rbac-${Date.now()}@example.com`;
+    await createTenantUser(baseUrl, admin.token, {
+      name: 'Customer RBAC User',
+      email: customerEmail,
+      role: 'customer',
+    });
+    const customer = await login(baseUrl, customerEmail, 'secret123');
 
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${customer.token}` };
     const ticketResponse = await fetch(`${baseUrl}/api/tickets`, {

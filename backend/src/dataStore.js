@@ -21,7 +21,7 @@ const resourceConfigs = [
   { route: 'histories', property: 'histories', table: 'ticket_histories', fields: ['ticketId', 'action', 'fromStatus', 'toStatus', 'actorId', 'commentId'] },
   { route: 'articles', property: 'articles', table: 'knowledge_articles', fields: ['title', 'body', 'category', 'published'] },
   { route: 'notifications', property: 'notifications', table: 'notifications', fields: ['type', 'payload', 'status'] },
-  { route: 'audit-logs', property: 'auditLogs', table: 'audit_logs', fields: ['method', 'path', 'statusCode', 'durationMs'] },
+  { route: 'audit-logs', property: 'auditLogs', table: 'audit_logs', tenantScoped: false, fields: ['method', 'path', 'statusCode', 'durationMs'] },
   { route: 'ai-conversations', property: 'aiConversations', table: 'ai_conversations', fields: ['prompt', 'reply'] },
   { route: 'cache-entries', property: 'cacheEntries', table: 'cache_entries', fields: ['key', 'value', 'expiresAt'] },
   { route: 'jobs', property: 'jobs', table: 'background_jobs', fields: ['type', 'payload', 'status', 'result', 'finishedAt'] },
@@ -79,9 +79,10 @@ function matches(row, { tenantId, search, filters = {} } = {}) {
 }
 
 class PrismaRepository {
-  constructor(prisma, model) {
+  constructor(prisma, model, { tenantScoped = true } = {}) {
     this.prisma = prisma;
     this.model = model;
+    this.tenantScoped = tenantScoped;
     this.modelFields = new Set((prismaModels.get(model)?.fields || [])
       .filter((field) => field.kind === 'scalar' || field.kind === 'enum')
       .map((field) => field.name));
@@ -122,9 +123,25 @@ class PrismaRepository {
     });
   }
 
-  async list({ tenantId, search, filters = {} } = {}) {
+  assertTenantScope({ tenantId, allowUnscoped = false, globalOnly = false } = {}) {
+    if (this.tenantScoped && !tenantId && !allowUnscoped && !globalOnly) {
+      throw new Error(`Missing tenantId for tenant-scoped ${this.model} query`);
+    }
+  }
+
+  buildWhere({ tenantId, search, filters = {}, includeGlobal = false, globalOnly = false, allowUnscoped = false } = {}) {
     const where = {};
-    if (tenantId) where.tenantId = tenantId;
+    const and = [];
+
+    if (this.tenantScoped && this.modelFields.has('tenantId') && !allowUnscoped) {
+      if (globalOnly) {
+        where.tenantId = null;
+      } else if (includeGlobal) {
+        and.push({ OR: [{ tenantId }, { tenantId: null }] });
+      } else {
+        where.tenantId = tenantId;
+      }
+    }
 
     Object.entries(filters).forEach(([key, value]) => {
       if (this.modelFields.has(key) && value !== undefined && value !== '') {
@@ -133,18 +150,36 @@ class PrismaRepository {
     });
 
     if (search && this.searchFields.length > 0) {
-      where.OR = this.searchFields.map((field) => ({
+      and.push({ OR: this.searchFields.map((field) => ({
         [field]: { contains: search, mode: 'insensitive' },
-      }));
+      })) });
     }
 
+    if (and.length) where.AND = and;
+    return where;
+  }
+
+  async list(options = {}) {
+    this.assertTenantScope(options);
+    const where = this.buildWhere(options);
     return this.prisma[this.model].findMany({ where });
   }
 
-  async findById(id, tenantId) {
+  async listAllUnsafe(options = {}) {
+    return this.prisma[this.model].findMany({ where: this.buildWhere({ ...options, allowUnscoped: true }) });
+  }
+
+  async findById(id, tenantId, options = {}) {
+    this.assertTenantScope({ ...options, tenantId });
     const where = { id };
-    if (tenantId) where.tenantId = tenantId;
+    if (this.tenantScoped && this.modelFields.has('tenantId')) where.tenantId = tenantId;
     
+    return this.prisma[this.model].findFirst({ where });
+  }
+
+  async findGlobalById(id) {
+    const where = { id };
+    if (this.modelFields.has('tenantId')) where.tenantId = null;
     return this.prisma[this.model].findFirst({ where });
   }
 
@@ -168,6 +203,25 @@ class PrismaRepository {
     await this.prisma[this.model].delete({
       where: { id },
     });
+    return true;
+  }
+
+  async updateGlobal(id, data) {
+    const { tenantId: _, ...updateData } = data;
+    const existing = await this.findGlobalById(id);
+    if (!existing) return null;
+    const safeData = this.splitData(updateData, existing.data);
+
+    return this.prisma[this.model].update({
+      where: { id },
+      data: safeData,
+    });
+  }
+
+  async deleteGlobal(id) {
+    const existing = await this.findGlobalById(id);
+    if (!existing) return false;
+    await this.prisma[this.model].delete({ where: { id } });
     return true;
   }
 }
@@ -367,11 +421,34 @@ class MemoryRepository {
   }
 
   async list(options = {}) {
-    return this.rows.filter((row) => matches(row, options));
+    this.assertTenantScope(options);
+    const { tenantId, includeGlobal = false, globalOnly = false } = options;
+    return this.rows.filter((row) => {
+      if (this.tenantScoped) {
+        if (globalOnly && row.tenantId != null) return false;
+        if (includeGlobal && row.tenantId !== tenantId && row.tenantId != null) return false;
+      }
+      return matches(row, globalOnly || includeGlobal ? { ...options, tenantId: undefined } : options);
+    });
   }
 
-  async findById(id, tenantId) {
+  assertTenantScope({ tenantId, allowUnscoped = false, globalOnly = false } = {}) {
+    if (this.tenantScoped && !tenantId && !allowUnscoped && !globalOnly) {
+      throw new Error('Missing tenantId for tenant-scoped memory query');
+    }
+  }
+
+  async listAllUnsafe(options = {}) {
+    return this.rows.filter((row) => matches(row, { ...options, allowUnscoped: true }));
+  }
+
+  async findById(id, tenantId, options = {}) {
+    this.assertTenantScope({ ...options, tenantId });
     return this.rows.find((row) => row.id === String(id) && matches(row, { tenantId })) || null;
+  }
+
+  async findGlobalById(id) {
+    return this.rows.find((row) => row.id === String(id) && row.tenantId == null) || null;
   }
 
   async update(id, data, tenantId) {
@@ -385,6 +462,22 @@ class MemoryRepository {
 
   async delete(id, tenantId) {
     const index = this.rows.findIndex((row) => row.id === String(id) && matches(row, { tenantId }));
+    if (index < 0) return false;
+    this.rows.splice(index, 1);
+    return true;
+  }
+
+  async updateGlobal(id, data) {
+    const row = await this.findGlobalById(id);
+    if (!row) return null;
+    const sanitized = { ...data };
+    if (this.tenantScoped) delete sanitized.tenantId;
+    Object.assign(row, sanitized, { updatedAt: new Date().toISOString() });
+    return row;
+  }
+
+  async deleteGlobal(id) {
+    const index = this.rows.findIndex((row) => row.id === String(id) && row.tenantId == null);
     if (index < 0) return false;
     this.rows.splice(index, 1);
     return true;
@@ -407,29 +500,31 @@ class PrismaStore extends BaseStore {
     super();
     const adapter = new PrismaPg(process.env.DATABASE_URL);
     this.prisma = new PrismaClient({ adapter });
+    const configByProperty = Object.fromEntries(resourceConfigs.map((config) => [config.property, config]));
+    const repoOptions = (property) => ({ tenantScoped: configByProperty[property]?.tenantScoped !== false });
 
-    this.tenants = new PrismaRepository(this.prisma, 'tenant');
-    this.users = new PrismaRepository(this.prisma, 'user');
-    this.roles = new PrismaRepository(this.prisma, 'role');
-    this.permissions = new PrismaRepository(this.prisma, 'permission');
-    this.departments = new PrismaRepository(this.prisma, 'department');
-    this.teams = new PrismaRepository(this.prisma, 'team');
-    this.agentProfiles = new PrismaRepository(this.prisma, 'agentProfile');
-    this.customers = new PrismaRepository(this.prisma, 'customer');
-    this.services = new PrismaRepository(this.prisma, 'service');
-    this.slaPolicies = new PrismaRepository(this.prisma, 'slaPolicy');
-    this.priorities = new PrismaRepository(this.prisma, 'priority');
-    this.categories = new PrismaRepository(this.prisma, 'category');
-    this.tickets = new PrismaRepository(this.prisma, 'ticket');
-    this.comments = new PrismaRepository(this.prisma, 'ticketComment');
-    this.attachments = new PrismaRepository(this.prisma, 'ticketAttachment');
-    this.histories = new PrismaRepository(this.prisma, 'ticketHistory');
-    this.articles = new PrismaRepository(this.prisma, 'knowledgeArticle');
-    this.notifications = new PrismaRepository(this.prisma, 'notification');
-    this.auditLogs = new PrismaRepository(this.prisma, 'auditLog');
-    this.aiConversations = new PrismaRepository(this.prisma, 'aiConversation');
-    this.cacheEntries = new PrismaRepository(this.prisma, 'cacheEntry');
-    this.jobs = new PrismaRepository(this.prisma, 'backgroundJob');
+    this.tenants = new PrismaRepository(this.prisma, 'tenant', repoOptions('tenants'));
+    this.users = new PrismaRepository(this.prisma, 'user', repoOptions('users'));
+    this.roles = new PrismaRepository(this.prisma, 'role', repoOptions('roles'));
+    this.permissions = new PrismaRepository(this.prisma, 'permission', repoOptions('permissions'));
+    this.departments = new PrismaRepository(this.prisma, 'department', repoOptions('departments'));
+    this.teams = new PrismaRepository(this.prisma, 'team', repoOptions('teams'));
+    this.agentProfiles = new PrismaRepository(this.prisma, 'agentProfile', repoOptions('agentProfiles'));
+    this.customers = new PrismaRepository(this.prisma, 'customer', repoOptions('customers'));
+    this.services = new PrismaRepository(this.prisma, 'service', repoOptions('services'));
+    this.slaPolicies = new PrismaRepository(this.prisma, 'slaPolicy', repoOptions('slaPolicies'));
+    this.priorities = new PrismaRepository(this.prisma, 'priority', repoOptions('priorities'));
+    this.categories = new PrismaRepository(this.prisma, 'category', repoOptions('categories'));
+    this.tickets = new PrismaRepository(this.prisma, 'ticket', repoOptions('tickets'));
+    this.comments = new PrismaRepository(this.prisma, 'ticketComment', repoOptions('comments'));
+    this.attachments = new PrismaRepository(this.prisma, 'ticketAttachment', repoOptions('attachments'));
+    this.histories = new PrismaRepository(this.prisma, 'ticketHistory', repoOptions('histories'));
+    this.articles = new PrismaRepository(this.prisma, 'knowledgeArticle', repoOptions('articles'));
+    this.notifications = new PrismaRepository(this.prisma, 'notification', repoOptions('notifications'));
+    this.auditLogs = new PrismaRepository(this.prisma, 'auditLog', repoOptions('auditLogs'));
+    this.aiConversations = new PrismaRepository(this.prisma, 'aiConversation', repoOptions('aiConversations'));
+    this.cacheEntries = new PrismaRepository(this.prisma, 'cacheEntry', repoOptions('cacheEntries'));
+    this.jobs = new PrismaRepository(this.prisma, 'backgroundJob', repoOptions('jobs'));
 
     this.cache = createCache();
     this.queue = new BackgroundQueue(this.jobs);

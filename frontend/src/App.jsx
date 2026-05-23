@@ -153,6 +153,7 @@ function App() {
   const [dashboard, setDashboard] = useState(null)
   const [tickets, setTickets] = useState([])
   const [customers, setCustomers] = useState([])
+  const [users, setUsers] = useState([])
   const [articles, setArticles] = useState([])
   const [histories, setHistories] = useState([])
   const [notifications, setNotifications] = useState([])
@@ -173,6 +174,8 @@ function App() {
   const [authNotice, setAuthNotice] = useState('')
   const [newTicket, setNewTicket] = useState({ title: '', description: '', priority: 'Medium', category: 'Software', customerName: '', customerEmail: '', customerCompany: '' })
   const [newArticle, setNewArticle] = useState({ title: '', body: '', category: 'General', published: true, global: false })
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'customer' })
+  const [userSaveStatus, setUserSaveStatus] = useState('')
   const [editingArticleId, setEditingArticleId] = useState('')
 
   const visibleNavItems = useMemo(() => navItems, [])
@@ -182,8 +185,18 @@ function App() {
   const selectedCustomer = customers.find((customer) => customer.id === selectedTicket?.customerId)
   const statusEntries = Object.entries(dashboard?.byStatus || {})
   const unreadNotifications = notifications.filter((notification) => notification.status !== 'read')
+  const canManageTickets = ['admin', 'agent'].includes(user?.role)
+  const canManageCustomers = ['admin', 'agent'].includes(user?.role)
+  const canViewUsers = ['admin', 'agent'].includes(user?.role)
+  const canCreateUsers = user?.role === 'admin'
   const canPublishGlobalKnowledge = user?.role === 'admin'
   const canAddInternalNotes = ['admin', 'agent'].includes(user?.role)
+  const canManageArticle = useCallback((article) => {
+    if (user?.role === 'admin') return true
+    if (article?.tenantId === null) return false
+    if (user?.role === 'agent') return true
+    return article?.data?.createdBy === user?.id
+  }, [user])
   const visibleArticles = articles
     .filter((article) => {
       const query = knowledgeSearch.trim().toLowerCase()
@@ -250,19 +263,21 @@ function App() {
   }
 
   const loadWorkspace = useCallback(async () => {
-    const [summary, customerRows, articleRows, historyRows, notificationRows] = await Promise.all([
+    const [summary, customerRows, articleRows, historyRows, notificationRows, userRows] = await Promise.all([
       apiRequest('/api/dashboard/summary', { token }),
       apiRequest('/api/customers', { token }),
       apiRequest('/api/articles', { token }),
       apiRequest('/api/histories', { token }),
       apiRequest('/api/notifications', { token }),
+      canViewUsers ? apiRequest('/api/users', { token }) : Promise.resolve([]),
     ])
     setDashboard(summary)
     setCustomers(customerRows)
+    setUsers(userRows)
     setArticles(articleRows)
     setHistories(historyRows)
     setNotifications(notificationRows)
-  }, [token])
+  }, [canViewUsers, token])
 
   async function refreshWorkspace() {
     await Promise.all([loadWorkspace(), reloadTickets()])
@@ -397,31 +412,47 @@ function App() {
     const body = form.elements.comment.value.trim()
     if (!body || !selectedTicket) return
     const internal = canAddInternalNotes && commentMode === 'internal'
-    const comment = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token, method: 'POST', body: { body, internal } })
-    form.reset()
-    setComments((rows) => [...rows, comment])
+    try {
+      const comment = await apiRequest(`/api/tickets/${selectedTicket.id}/comments`, { token, method: 'POST', body: { body, internal } })
+      form.reset()
+      setComments((rows) => [...rows, comment])
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   async function deleteTicket(ticketId) {
     if (!window.confirm('Delete this ticket? This action cannot be undone.')) return
-    await apiRequest(`/api/tickets/${ticketId}`, { token, method: 'DELETE' })
-    setSelectedTicket(null)
-    setComments([])
-    setAttachments([])
-    await refreshWorkspace()
+    try {
+      await apiRequest(`/api/tickets/${ticketId}`, { token, method: 'DELETE' })
+      setSelectedTicket(null)
+      setComments([])
+      setAttachments([])
+      await refreshWorkspace()
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   async function deleteResource(resource, id, refresh = loadWorkspace) {
     if (!window.confirm(`Delete this ${resource.replace('-', ' ')}?`)) return
-    await apiRequest(`/api/${resource}/${id}`, { token, method: 'DELETE' })
-    await refresh()
+    try {
+      await apiRequest(`/api/${resource}/${id}`, { token, method: 'DELETE' })
+      await refresh()
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   async function deleteComment(commentId) {
     if (!selectedTicket || !window.confirm('Delete this comment?')) return
-    await apiRequest(`/api/tickets/${selectedTicket.id}/comments/${commentId}`, { token, method: 'DELETE' })
-    setComments((rows) => rows.filter((comment) => comment.id !== commentId))
-    await loadWorkspace()
+    try {
+      await apiRequest(`/api/tickets/${selectedTicket.id}/comments/${commentId}`, { token, method: 'DELETE' })
+      setComments((rows) => rows.filter((comment) => comment.id !== commentId))
+      await loadWorkspace()
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   async function uploadTicketAttachments(event) {
@@ -496,22 +527,30 @@ function App() {
 
   async function deleteAttachment(attachmentId) {
     if (!selectedTicket || !window.confirm('Delete this attachment?')) return
-    await apiRequest(`/api/tickets/${selectedTicket.id}/attachments/${attachmentId}`, { token, method: 'DELETE' })
-    setAttachments((rows) => rows.filter((attachment) => attachment.id !== attachmentId))
-    await loadWorkspace()
+    try {
+      await apiRequest(`/api/tickets/${selectedTicket.id}/attachments/${attachmentId}`, { token, method: 'DELETE' })
+      setAttachments((rows) => rows.filter((attachment) => attachment.id !== attachmentId))
+      await loadWorkspace()
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   async function createArticle(event) {
     event.preventDefault()
     if (!newArticle.title.trim() || !newArticle.body.trim()) return
-    await apiRequest(editingArticleId ? `/api/articles/${editingArticleId}` : '/api/articles', {
-      token,
-      method: editingArticleId ? 'PUT' : 'POST',
-      body: newArticle,
-    })
-    setNewArticle({ title: '', body: '', category: 'General', published: true, global: user?.role === 'admin' })
-    setEditingArticleId('')
-    await loadWorkspace()
+    try {
+      await apiRequest(editingArticleId ? `/api/articles/${editingArticleId}` : '/api/articles', {
+        token,
+        method: editingArticleId ? 'PUT' : 'POST',
+        body: newArticle,
+      })
+      setNewArticle({ title: '', body: '', category: 'General', published: true, global: user?.role === 'admin' })
+      setEditingArticleId('')
+      await loadWorkspace()
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   function editArticle(article) {
@@ -532,8 +571,12 @@ function App() {
 
   async function deleteArticle(articleId) {
     if (!window.confirm('Delete this knowledge article?')) return
-    await apiRequest(`/api/articles/${articleId}`, { token, method: 'DELETE' })
-    setArticles((rows) => rows.filter((article) => article.id !== articleId))
+    try {
+      await apiRequest(`/api/articles/${articleId}`, { token, method: 'DELETE' })
+      setArticles((rows) => rows.filter((article) => article.id !== articleId))
+    } catch (requestError) {
+      handleRequestError(requestError)
+    }
   }
 
   async function markNotificationRead(notificationId) {
@@ -544,6 +587,26 @@ function App() {
   async function deleteNotification(notificationId) {
     await apiRequest(`/api/notifications/${notificationId}`, { token, method: 'DELETE' })
     setNotifications((rows) => rows.filter((row) => row.id !== notificationId))
+  }
+
+  async function createUser(event) {
+    event.preventDefault()
+    if (!newUser.name.trim() || !newUser.email.trim() || !newUser.password.trim()) return
+    setUserSaveStatus('Creating...')
+    setError('')
+    try {
+      const created = await apiRequest('/api/users', {
+        token,
+        method: 'POST',
+        body: newUser,
+      })
+      setUsers((rows) => [...rows, created])
+      setNewUser({ name: '', email: '', password: '', role: 'customer' })
+      setUserSaveStatus('Created')
+    } catch (requestError) {
+      setUserSaveStatus('')
+      handleRequestError(requestError)
+    }
   }
 
   async function searchAll(event) {
@@ -689,10 +752,10 @@ function App() {
             <div className="card detail-card">
               {selectedTicket ? (
                 <>
-                  <div className="detail-head"><div><span>{ticketReference(selectedTicket)}</span><h2>{selectedTicket.title}</h2></div><div className="detail-actions"><strong>{formatLabel(selectedTicket.status)}</strong><button className="danger-button" onClick={() => deleteTicket(selectedTicket.id)}>Delete</button></div></div>
+                  <div className="detail-head"><div><span>{ticketReference(selectedTicket)}</span><h2>{selectedTicket.title}</h2></div><div className="detail-actions"><strong>{formatLabel(selectedTicket.status)}</strong>{canManageTickets && <button className="danger-button" onClick={() => deleteTicket(selectedTicket.id)}>Delete</button>}</div></div>
                   <p className="description">{selectedTicket.description || 'No description provided.'}</p>
                   <div className="meta-grid"><div><span>Priority</span><strong>{selectedTicket.priority}</strong></div><div><span>Category</span><strong>{selectedTicket.category || 'General'}</strong></div><div><span>Customer</span><strong>{selectedCustomer?.name || 'Unassigned'}</strong></div></div>
-                  <div className="status-row">{statuses.map((status) => <button key={status} type="button" className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>{formatLabel(status)}</button>)}</div>
+                  {canManageTickets && <div className="status-row">{statuses.map((status) => <button key={status} type="button" className={selectedTicket.status === status ? 'active' : ''} onClick={() => updateStatus(status)}>{formatLabel(status)}</button>)}</div>}
                   <div className="attachments">
                     <div className="section-head">
                       <h3>Attachments</h3>
@@ -710,14 +773,14 @@ function App() {
                         <div className="attachment-actions">
                           <a className="button-link" href={attachment.url} target="_blank" rel="noreferrer">Open</a>
                           <a className="button-link" href={attachment.url} download={attachment.fileName}>Download</a>
-                          <button className="danger-button ghost-danger" onClick={() => deleteAttachment(attachment.id)}>Delete</button>
+                          {canManageTickets && <button className="danger-button ghost-danger" onClick={() => deleteAttachment(attachment.id)}>Delete</button>}
                         </div>
                       </div>
                     ))}
                     {!attachments.length && <EmptyState title="No attachments" text="Upload screenshots, logs, invoices, or any file needed to resolve this ticket." />}
                     {attachmentStatus && <span className="save-status">{attachmentStatus}</span>}
                   </div>
-                  <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className={`comment-row with-action ${comment.internal ? 'internal-note' : ''}`}><p>{comment.body}</p><div className="comment-actions">{comment.internal && <span>Internal note</span>}<button className="danger-button ghost-danger" onClick={() => deleteComment(comment.id)}>Delete</button></div></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
+                  <div className="comments"><h3>Comments</h3>{comments.map((comment) => <div key={comment.id} className={`comment-row with-action ${comment.internal ? 'internal-note' : ''}`}><p>{comment.body}</p><div className="comment-actions">{comment.internal && <span>Internal note</span>}{canManageTickets && <button className="danger-button ghost-danger" onClick={() => deleteComment(comment.id)}>Delete</button>}</div></div>)} {!comments.length && <EmptyState title="No comments" text="Add the first update." />}</div>
                   <form className="comment-form" onSubmit={addComment}>
                     {canAddInternalNotes && (
                       <div className="comment-mode">
@@ -751,7 +814,7 @@ function App() {
 
         {activeView === 'Customers' && (
           <section>
-            <div className="card"><div className="card-head"><h2>Customers</h2><span>{customers.length}</span></div><div className="table-list">{customers.map((customer) => <div key={customer.id} className="table-row with-action"><strong>{customer.name}</strong><span>{customer.email}</span><span>{customer.company || 'No company'}</span><button className="danger-button ghost-danger" onClick={() => deleteResource('customers', customer.id)}>Delete</button></div>)}</div></div>
+            <div className="card"><div className="card-head"><h2>Customers</h2><span>{customers.length}</span></div><div className="table-list">{customers.map((customer) => <div key={customer.id} className="table-row with-action"><strong>{customer.name}</strong><span>{customer.email}</span><span>{customer.company || 'No company'}</span>{canManageCustomers && <button className="danger-button ghost-danger" onClick={() => deleteResource('customers', customer.id)}>Delete</button>}</div>)}</div></div>
           </section>
         )}
 
@@ -766,10 +829,12 @@ function App() {
                     <div className="article-head"><span>{article.category}</span><span>{article.data?.scope === 'global' ? 'All accounts' : 'Internal'} / {article.published ? 'Published' : 'Draft'}</span></div>
                     <h3>{article.title}</h3>
                     <p>{article.body}</p>
-                    <div className="article-actions">
-                      <button className="secondary-button" type="button" onClick={() => editArticle(article)}>Edit</button>
-                      <button className="danger-button ghost-danger" type="button" onClick={() => deleteArticle(article.id)}>Delete</button>
-                    </div>
+                    {canManageArticle(article) && (
+                      <div className="article-actions">
+                        <button className="secondary-button" type="button" onClick={() => editArticle(article)}>Edit</button>
+                        <button className="danger-button ghost-danger" type="button" onClick={() => deleteArticle(article.id)}>Delete</button>
+                      </div>
+                    )}
                   </article>
                 ))}
                 {!visibleArticles.length && <EmptyState title="No articles found" text="Publish a knowledge article to save repeat answers for this account." />}
@@ -829,7 +894,7 @@ function App() {
             <div className="card settings-shell">
               <div className="card-head"><div><h2>Settings</h2><p className="muted">Manage your profile, workspace preferences and notification defaults.</p></div><button className="danger-outline-button" type="button" onClick={confirmLogout}>Logout</button></div>
               <div className="settings-tabs">
-                {['Profile', 'Preferences', 'Notifications', 'System'].map((tab) => <button key={tab} className={settingsTab === tab ? 'active' : ''} onClick={() => setSettingsTab(tab)}>{tab}</button>)}
+                {['Profile', 'Preferences', ...(canViewUsers ? ['Team'] : []), 'Notifications', 'System'].map((tab) => <button key={tab} className={settingsTab === tab ? 'active' : ''} onClick={() => setSettingsTab(tab)}>{tab}</button>)}
               </div>
 
               {settingsTab === 'Profile' && (
@@ -869,6 +934,30 @@ function App() {
                     <label>Start page<select value={preferenceSettings.startPage} onChange={(event) => setPreferenceSettings({ ...preferenceSettings, startPage: event.target.value })}>{visibleNavItems.map((item) => <option key={item}>{item}</option>)}</select></label>
                     <label>Default priority<select value={preferenceSettings.defaultPriority} onChange={(event) => setPreferenceSettings({ ...preferenceSettings, defaultPriority: event.target.value })}><option>High</option><option>Medium</option><option>Low</option></select></label>
                     <label>Default category<input value={preferenceSettings.defaultCategory} onChange={(event) => { setPreferenceSettings({ ...preferenceSettings, defaultCategory: event.target.value }); setNewTicket((ticket) => ({ ...ticket, category: event.target.value })) }} /></label>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === 'Team' && canViewUsers && (
+                <div className="settings-section">
+                  {canCreateUsers && (
+                    <form className="settings-form-grid" onSubmit={createUser}>
+                      <label>Full name<input value={newUser.name} onChange={(event) => setNewUser({ ...newUser, name: event.target.value })} /></label>
+                      <label>Email<input value={newUser.email} onChange={(event) => setNewUser({ ...newUser, email: event.target.value })} /></label>
+                      <label>Password<input type="password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} /></label>
+                      <label>Role<select value={newUser.role} onChange={(event) => setNewUser({ ...newUser, role: event.target.value })}><option value="customer">Customer</option><option value="agent">Agent</option></select></label>
+                      <div className="actions"><button type="submit">Create user</button>{userSaveStatus && <span className="save-status">{userSaveStatus}</span>}</div>
+                    </form>
+                  )}
+                  <div className="table-list">
+                    {users.map((tenantUser) => (
+                      <div key={tenantUser.id} className="table-row">
+                        <strong>{tenantUser.name}</strong>
+                        <span>{tenantUser.email}</span>
+                        <span>{formatLabel(tenantUser.role)}</span>
+                      </div>
+                    ))}
+                    {!users.length && <EmptyState title="No users found" text="Tenant members will appear here." />}
                   </div>
                 </div>
               )}

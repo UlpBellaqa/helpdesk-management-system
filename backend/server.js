@@ -6,7 +6,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { createStore, resourceConfigs } = require('./src/dataStore');
 const { buildSwaggerSpec, swaggerHtml } = require('./src/swagger');
-const { validateLoginRequest, validateRegisterRequest } = require('./src/validation');
+const { validateEmail, validateLoginRequest, validateName, validatePassword, validateRegisterRequest } = require('./src/validation');
 const { ApiError, BadRequestError, UnauthorizedError } = require('./src/errors');
 const { LoggingMiddleware, AuthenticationMiddleware } = require('./src/middleware');
 
@@ -54,6 +54,23 @@ function tenantId(req) {
   return req.user?.tenantId;
 }
 
+function tenantIsActive(tenant) {
+  const data = tenant?.data && typeof tenant.data === 'object' && !Array.isArray(tenant.data) ? tenant.data : {};
+  return Boolean(tenant) && tenant.active !== false && data.active !== false;
+}
+
+function validateTenant(store) {
+  return asyncRoute(async (req, res, next) => {
+    if (!req.user) return next();
+    const tenant = await store.tenants.findById(req.user.tenantId);
+    if (!tenantIsActive(tenant)) {
+      throw new UnauthorizedError('Tenant is inactive or unavailable');
+    }
+    req.tenant = tenant;
+    return next();
+  });
+}
+
 function prepareResourcePayload(req, resource) {
   if (resource === 'tenants') return req.body;
   return { ...req.body, tenantId: tenantId(req) };
@@ -87,9 +104,26 @@ function safeUser(user) {
   return rest;
 }
 
+function safeUsers(users) {
+  return users.map(safeUser);
+}
+
+function tenantUserRole(value) {
+  const role = String(value || 'customer').trim().toLowerCase();
+  return ['agent', 'customer'].includes(role) ? role : null;
+}
+
+function validateTenantUserRequest(body) {
+  const role = tenantUserRole(body?.role);
+  return validateEmail(body?.email)
+    || validatePassword(body?.password)
+    || validateName(body?.name)
+    || (!role ? 'Role must be agent or customer' : null);
+}
+
 async function ensureUniqueEmail(store, email, currentUserId) {
   const normalizedEmail = normalizeEmail(email);
-  const existing = (await store.users.list())
+  const existing = (await store.users.listAllUnsafe())
     .filter((row) => normalizeEmail(row.email) === normalizedEmail)
     .find((row) => row.id !== currentUserId);
   if (existing) throw new BadRequestError('Email already exists');
@@ -183,23 +217,35 @@ function sanitizeTicketPayload(payload, customerId) {
 }
 
 async function visibleKnowledgeArticles(store, req) {
-  const allArticles = await store.articles.list();
   if (req.user?.role === 'admin') {
-    return allArticles.filter((article) => article.tenantId === tenantId(req) || article.tenantId === null);
+    return store.articles.list({ tenantId: tenantId(req), includeGlobal: true });
   }
 
   const ownTenantArticles = await store.articles.list({ tenantId: tenantId(req) });
-  const globalArticles = (await store.articles.list()).filter((article) => article.tenantId === null && article.published);
+  const globalArticles = await store.articles.list({ tenantId: tenantId(req), globalOnly: true, filters: { published: true } });
   const ownArticles = ownTenantArticles.filter((article) => article.published || article.data?.createdBy === req.user?.id);
   const rows = [...ownArticles, ...globalArticles];
   return rows.filter((article, index) => rows.findIndex((row) => row.id === article.id) === index);
 }
 
+async function searchableArticles(store, req, query) {
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  const rows = await visibleKnowledgeArticles(store, req);
+  if (!normalizedQuery) return rows;
+  return rows.filter((article) => [article.title, article.body, article.category]
+    .some((value) => String(value || '').toLowerCase().includes(normalizedQuery)));
+}
+
 async function canModifyKnowledgeArticle(store, req, articleId) {
-  const article = (await store.articles.list()).find((row) => row.id === articleId);
-  if (!article) return null;
-  if (article.tenantId === tenantId(req)) return article;
-  if (req.user?.role === 'admin' && article.tenantId === null) return article;
+  const article = await store.articles.findById(articleId, tenantId(req), { includeGlobal: true });
+  const globalArticle = article || await store.articles.findGlobalById(articleId);
+  if (!globalArticle) return null;
+  if (!article && globalArticle.tenantId !== null) return false;
+  const visibleArticle = article || globalArticle;
+  const canManageTenantArticle = ['admin', 'agent'].includes(req.user?.role);
+  const isAuthor = visibleArticle.data?.createdBy === req.user?.id;
+  if (visibleArticle.tenantId === tenantId(req) && (canManageTenantArticle || isAuthor)) return visibleArticle;
+  if (req.user?.role === 'admin' && visibleArticle.tenantId === null) return visibleArticle;
   return false;
 }
 
@@ -454,6 +500,7 @@ function createApp(store) {
   app.use(loggingMiddleware.handle.bind(loggingMiddleware));
 
   app.use(authMiddleware.handle.bind(authMiddleware));
+  app.use(validateTenant(store));
 
   app.get('/', (req, res) => res.redirect('/api-docs'));
   app.get('/health', (req, res) => res.json({ status: 'ok', service: 'helpdesk-api' }));
@@ -465,6 +512,7 @@ function createApp(store) {
   });
 
   const signToken = (payload) => authMiddleware.signToken(payload);
+  const requireAdmin = authMiddleware.requireAdmin();
   const requireAdminOrAgent = authMiddleware.requireAdminOrAgent();
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
@@ -474,17 +522,17 @@ function createApp(store) {
     }
 
     const email = normalizeEmail(req.body.email);
-    const exists = (await store.users.list()).find((row) => normalizeEmail(row.email) === email);
+    const exists = (await store.users.listAllUnsafe()).find((row) => normalizeEmail(row.email) === email);
     if (exists) throw new BadRequestError('Email already exists');
 
     const tenant = await store.tenants.create({ 
       name: String(req.body.companyName || '').trim(), 
-      slug: req.body.companySlug || `tenant-${Date.now()}` 
+      slug: req.body.companySlug || `tenant-${Date.now()}`,
+      data: { active: true },
     });
     if (!tenant) throw new BadRequestError('Tenant could not be created');
 
-    const requestedRole = req.body.role || 'customer';
-    const role = ['admin', 'agent'].includes(requestedRole) ? 'customer' : requestedRole;
+    const role = 'admin';
     const hashedPassword = await hashPassword(req.body.password);
 
     const user = await store.users.create({
@@ -505,8 +553,9 @@ function createApp(store) {
     }
 
     const email = normalizeEmail(req.body.email);
-    const user = (await store.users.list()).find((row) => normalizeEmail(row.email) === email);
-    if (!user || !(await verifyPassword(req.body.password, user.password))) {
+    const user = (await store.users.listAllUnsafe()).find((row) => normalizeEmail(row.email) === email);
+    const tenant = user ? await store.tenants.findById(user.tenantId) : null;
+    if (!user || !tenantIsActive(tenant) || !(await verifyPassword(req.body.password, user.password))) {
       throw new UnauthorizedError('Invalid credentials');
     }
     const token = signToken({ id: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
@@ -537,8 +586,32 @@ function createApp(store) {
   }));
 
   app.get('/api/tenants/current', asyncRoute(async (req, res) => {
-    const tenant = await store.tenants.findById(tenantId(req));
-    return tenant ? res.json(tenant) : notFound(res);
+    return req.tenant ? res.json(req.tenant) : notFound(res);
+  }));
+
+  app.get('/api/users', requireAdminOrAgent, asyncRoute(async (req, res) => {
+    const users = await store.users.list({ tenantId: tenantId(req) });
+    return res.json(safeUsers(users));
+  }));
+
+  app.post('/api/users', requireAdmin, asyncRoute(async (req, res) => {
+    const validationError = validateTenantUserRequest(req.body);
+    if (validationError) {
+      throw new BadRequestError(validationError);
+    }
+
+    const email = normalizeEmail(req.body.email);
+    await ensureUniqueEmail(store, email);
+
+    const user = await store.users.create({
+      tenantId: tenantId(req),
+      name: String(req.body.name || '').trim(),
+      email,
+      password: await hashPassword(req.body.password),
+      role: tenantUserRole(req.body.role),
+    });
+
+    return res.status(201).json(safeUser(user));
   }));
 
   app.get('/api/dashboard/summary', asyncRoute(async (req, res) => {
@@ -561,13 +634,15 @@ function createApp(store) {
 
   app.get('/api/search', asyncRoute(async (req, res) => {
     const query = req.query.q || '';
-    const cacheKey = `${tenantId(req)}:${query}:${JSON.stringify(req.query)}`;
+    const cacheKey = `tenant:${tenantId(req)}:search:${query}:${JSON.stringify(req.query)}`;
     const cached = await store.cache.get(cacheKey);
     if (cached) return res.json({ cached: true, results: cached });
 
     const results = [];
     for (const resource of ['tickets', 'customers', 'articles']) {
-      const rows = await resourceMap[resource].list({ tenantId: tenantId(req), search: query });
+      const rows = resource === 'articles'
+        ? await searchableArticles(store, req, query)
+        : await resourceMap[resource].list({ tenantId: tenantId(req), search: query });
       rows.forEach((item) => results.push({ resource, item }));
     }
     await store.cache.set(cacheKey, results);
@@ -720,13 +795,7 @@ function createApp(store) {
   }));
 
   app.get('/api/articles', asyncRoute(async (req, res) => {
-    const rows = await visibleKnowledgeArticles(store, req);
-    const query = String(req.query.q || '').trim().toLowerCase();
-    const filtered = query
-      ? rows.filter((article) => [article.title, article.body, article.category]
-        .some((value) => String(value || '').toLowerCase().includes(query)))
-      : rows;
-    return res.json(filtered);
+    return res.json(await searchableArticles(store, req, req.query.q));
   }));
 
   app.post('/api/articles', asyncRoute(async (req, res) => {
@@ -738,7 +807,9 @@ function createApp(store) {
     if (article === null) return notFound(res);
     if (article === false) return res.status(403).json({ message: 'You can only edit your own knowledge articles' });
     const payload = prepareArticlePayload(req);
-    const updated = await store.articles.update(article.id, payload, article.tenantId || undefined);
+    const updated = article.tenantId === null
+      ? await store.articles.updateGlobal(article.id, payload)
+      : await store.articles.update(article.id, payload, tenantId(req));
     return updated ? res.json(updated) : notFound(res);
   }));
 
@@ -746,7 +817,11 @@ function createApp(store) {
     const article = await canModifyKnowledgeArticle(store, req, req.params.id);
     if (article === null) return notFound(res);
     if (article === false) return res.status(403).json({ message: 'You can only delete your own knowledge articles' });
-    await store.articles.delete(article.id, article.tenantId || undefined);
+    if (article.tenantId === null) {
+      await store.articles.deleteGlobal(article.id);
+    } else {
+      await store.articles.delete(article.id, tenantId(req));
+    }
     return res.status(204).send();
   }));
 
