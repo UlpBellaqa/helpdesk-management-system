@@ -75,6 +75,23 @@ npm run build
 
 Testet backend perdorin nje store ne memorie per te qene te thjeshta ne CI. Kur vendoset `DATABASE_URL`, aplikacioni real perdor PostgreSQL; kur vendoset `REDIS_URL`, kerkimi cache-ohet ne Redis.
 
+## CI/CD
+
+CI eshte konfiguruar ne `.github/workflows/ci.yml` dhe ekzekutohet ne `push` ne `main` ose `pull_request`.
+
+CD eshte konfiguruar ne `.github/workflows/cd.yml`. Deploy ekzekutohet automatikisht pasi CI kalon me sukses ne `main`, ose manualisht nga GitHub Actions me `workflow_dispatch`.
+
+Per CD duhen keto GitHub repository secrets:
+
+- `DEPLOY_HOST`: IP ose domain i serverit.
+- `DEPLOY_USER`: user-i SSH ne server.
+- `DEPLOY_SSH_KEY`: private key per SSH deploy.
+- `DEPLOY_PATH`: folderi ku ndodhet projekti ne server.
+- `DEPLOY_RESTART_COMMAND`: komanda qe ristarton aplikacionin, p.sh. `pm2 restart helpdesk-backend && pm2 restart helpdesk-frontend`.
+- `DEPLOY_PORT`: opsional, default eshte `22`.
+
+Workflow ben `git pull`, instalon dependencies, gjeneron Prisma client, ekzekuton migrimet, teston backend-in, ben build frontend-in dhe pastaj ekzekuton komanden e restartimit.
+
 ## Shtrim Projekti
 
 Backlog-u ne GitHub Projects mund te ndahet sipas ketyre pjeseve: auth/roles, PostgreSQL schema, multi-tenancy, ticket CRUD, comments/status updates, search/filtering, Redis cache, OpenAI, Swagger, frontend, tests/CI dhe dokumentim.
