@@ -6,17 +6,19 @@ Platforme per menaxhimin e tiketave te supportit per kompani te ndryshme. Perdor
 
 ## Teknologjite
 
-- React
-- Node.js + Express
+- Next.js 16 (React 19)
+- Node.js + Express 5
+- Prisma ORM
 - PostgreSQL
 - Redis
+- Google Gemini AI + OpenAI fallback
 
 ## Struktura
 
-- `backend`: REST API, auth, ticket management, PostgreSQL repository layer, Redis cache.
-- `frontend`: React + Context API.
+- `backend`: REST API, auth, ticket management, Prisma ORM, Redis cache.
+- `frontend`: Next.js 16 app router + Context API.
 - `docker-compose.yml`: PostgreSQL dhe Redis per zhvillim lokal.
-- `backend/migrations`: schema SQL dhe lista e 22 modeleve.
+- `backend/prisma`: Prisma schema me 22 modele.
 
 ## Nisja Lokale
 
@@ -27,7 +29,10 @@ docker compose up -d postgres redis
 ```bash
 cd backend
 copy .env.example .env
+# Edit .env and set DATABASE_URL and TOKEN_SECRET
 npm install
+npx prisma generate
+npx prisma migrate dev
 npm run dev
 ```
 
@@ -57,7 +62,7 @@ API perfshin:
 - ticket comments dhe status updates
 - search/filtering me Redis cache
 - background jobs
-- OpenAI endpoint `/api/ai/chat`
+- AI endpoint `/api/ai/chat` (Google Gemini primary, OpenAI fallback)
 - Swagger docs
 
 ## Testet
