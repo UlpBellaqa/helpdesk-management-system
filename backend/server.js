@@ -9,6 +9,7 @@ const { buildSwaggerSpec, swaggerHtml } = require('./src/swagger');
 const { validateEmail, validateLoginRequest, validateName, validatePassword, validateRegisterRequest } = require('./src/validation');
 const { ApiError, BadRequestError, UnauthorizedError } = require('./src/errors');
 const { LoggingMiddleware, AuthenticationMiddleware } = require('./src/middleware');
+const TicketService = require('./src/services/TicketService');
 
 dotenv.config();
 
@@ -504,6 +505,10 @@ function createApp(store) {
 
   app.get('/', (req, res) => res.redirect('/api-docs'));
   app.get('/health', (req, res) => res.json({ status: 'ok', service: 'helpdesk-api' }));
+  app.get('/api/oop-demo/tickets', async (req, res) => {
+  const tickets = await TicketService.findAll();
+  res.json(tickets);
+});
   app.get('/api-docs.json', (req, res) => res.json(buildSwaggerSpec(PORT)));
   app.get('/api-docs', (req, res) => {
     res.set('Cache-Control', 'no-store');
