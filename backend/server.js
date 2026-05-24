@@ -9,7 +9,6 @@ const { buildSwaggerSpec, swaggerHtml } = require('./src/swagger');
 const { validateEmail, validateLoginRequest, validateName, validatePassword, validateRegisterRequest } = require('./src/validation');
 const { ApiError, BadRequestError, UnauthorizedError } = require('./src/errors');
 const { LoggingMiddleware, AuthenticationMiddleware } = require('./src/middleware');
-const TicketService = require('./src/services/TicketService');
 
 dotenv.config();
 
