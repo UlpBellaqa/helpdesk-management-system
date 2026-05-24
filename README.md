@@ -98,7 +98,3 @@ Per CD duhen keto GitHub repository secrets:
 - `DEPLOY_PORT`: opsional, default eshte `22`.
 
 Workflow ben `git pull`, instalon dependencies, gjeneron Prisma client, ekzekuton migrimet, teston backend-in, ben build frontend-in dhe pastaj ekzekuton komanden e restartimit.
-
-## Shtrim Projekti
-
-Backlog-u ne GitHub Projects mund te ndahet sipas ketyre pjeseve: auth/roles, PostgreSQL schema, multi-tenancy, ticket CRUD, comments/status updates, search/filtering, Redis cache, OpenAI, Swagger, frontend, tests/CI dhe dokumentim.
