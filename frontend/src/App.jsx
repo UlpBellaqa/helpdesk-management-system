@@ -177,6 +177,8 @@ function App() {
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'customer' })
   const [userSaveStatus, setUserSaveStatus] = useState('')
   const [editingArticleId, setEditingArticleId] = useState('')
+  const [aiAnalysis, setAiAnalysis] = useState(null)
+  const [loadingAI, setLoadingAI] = useState(false)
 
   const visibleNavItems = useMemo(() => navItems, [])
 
@@ -615,6 +617,37 @@ function App() {
     setSearchResult(await apiRequest(`/api/search?q=${encodeURIComponent(globalSearch)}`, { token }))
   }
 
+  async function analyzeTicketWithAI() {
+  if (!newTicket.title.trim() && !newTicket.description.trim()) {
+    return
+  }
+
+  try {
+    setLoadingAI(true)
+
+    const data = await apiRequest('/api/ai/analyze-ticket', {
+      token,
+      method: 'POST',
+      body: {
+        title: newTicket.title,
+        description: newTicket.description,
+      },
+    })
+
+    setAiAnalysis(data)
+
+    setNewTicket((current) => ({
+      ...current,
+      category: data.category || current.category,
+      priority: data.priority || current.priority,
+    }))
+  } catch (requestError) {
+    handleRequestError(requestError)
+  } finally {
+    setLoadingAI(false)
+  }
+}
+
   async function askAi() {
     if (!aiMessage.trim()) return
     setError('')
@@ -799,8 +832,44 @@ function App() {
               <h2>New ticket</h2>
               <input placeholder="Title" value={newTicket.title} onChange={(event) => setNewTicket({ ...newTicket, title: event.target.value })} />
               <textarea placeholder="Description" value={newTicket.description} onChange={(event) => setNewTicket({ ...newTicket, description: event.target.value })} />
+              <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={analyzeTicketWithAI}
+                >
+                  {loadingAI ? 'Analyzing...' : 'Analyze with AI'}
+                </button>
               <select value={newTicket.priority} onChange={(event) => setNewTicket({ ...newTicket, priority: event.target.value })}><option>High</option><option>Medium</option><option>Low</option></select>
               <input placeholder="Category" value={newTicket.category} onChange={(event) => setNewTicket({ ...newTicket, category: event.target.value })} />
+              {aiAnalysis && (
+                  <div className="ai-analysis-card">
+                    <h3>AI Analysis</h3>
+
+                    <div className="ai-grid">
+                      <div className="ai-item">
+                        <span>Category</span>
+                        <strong>{aiAnalysis.category}</strong>
+                      </div>
+
+                      <div className="ai-item">
+                        <span>Priority</span>
+                        <strong>{aiAnalysis.priority}</strong>
+                      </div>
+
+                      <div className="ai-item">
+                        <span>Sentiment</span>
+                        <strong>{aiAnalysis.sentiment}</strong>
+                      </div>
+
+                      <div className="ai-item">
+                        <span>Tags</span>
+                        <strong>
+                          {aiAnalysis.tags?.join(', ')}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
               <div className="form-section">
                 <h3>Customer</h3>
                 <input placeholder="Customer name" value={newTicket.customerName} onChange={(event) => setNewTicket({ ...newTicket, customerName: event.target.value })} />
